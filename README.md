@@ -27,6 +27,10 @@ npm test           # unit tests (Vitest)
 npm run test:e2e   # browser end-to-end test (Playwright + Chromium)
 ```
 
+### GitHub Pages
+
+`.github/workflows/pages.yml` tests, builds and deploys the app on every push to `main` (or manually from the Actions tab). One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**. The site is then served at `https://<owner>.github.io/<repo>/`.
+
 Everything runs client-side. Images are never uploaded to a server.
 
 ## Features
