@@ -40,39 +40,53 @@ export interface OutputSizeSpec {
   customAspectH: number;
 }
 
+/**
+ * How the two eye views are packaged.
+ *  sbs      – full side-by-side (each eye W/2 × H)
+ *  half-sbs – each eye rendered W × H, squeezed to W/2 × H (3D TVs, VR players)
+ *  ou       – over/under (each eye W × H/2)
+ *  half-ou  – each eye rendered W × H, squeezed to W × H/2
+ *  anaglyph – single red/cyan image W × H
+ *  wiggle   – animation alternating the eyes, W × H frames (GIF / video)
+ *  mpo      – multi-picture JPEG with two W × H views (3D cameras / displays)
+ */
+export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo';
+
 export interface OutputSize {
-  /** Full side-by-side output. */
+  /** Final output file size (for wiggle / mpo: size of each frame / image). */
   width: number;
   height: number;
-  /** Each eye view (width / 2). */
+  /** Size of each rendered eye view. Offsets are measured in these pixels. */
   eyeWidth: number;
   eyeHeight: number;
 }
 
-function even(n: number): number {
+function evenUp(n: number): number {
   const r = Math.max(2, Math.round(n));
   return r % 2 === 0 ? r : r + 1;
 }
 
 /**
- * Resolve the final output size. The full output width is always even so the
- * two eye views have exactly identical dimensions.
+ * Resolve the final output size for a stereo format.
  *
- * Examples: 9:16 @ 1080p → 1080×1920 (eyes 540×1920); 16:9 @ 4K → 3840×2160.
+ * Examples (SBS): 9:16 @ 1080p → 1080×1920 (eyes 540×1920); 16:9 @ 4K → 3840×2160.
  */
-export function resolveOutputSize(spec: OutputSizeSpec): OutputSize {
+export function resolveOutputSize(spec: OutputSizeSpec, format: StereoFormat = 'sbs'): OutputSize {
+  // Tiling factors of the eye views within the output.
+  const tileX = format === 'sbs' ? 2 : 1;
+  const tileY = format === 'ou' ? 2 : 1;
   let width: number;
   let height: number;
   if (spec.resolution === 'custom') {
-    width = even(clampSide(spec.customWidth));
-    height = Math.max(1, Math.round(clampSide(spec.customHeight)));
+    width = Math.round(clampSide(spec.customWidth));
+    height = Math.round(clampSide(spec.customHeight));
   } else {
     const [aw, ah] = spec.aspect === 'custom'
       ? [Math.max(0.01, spec.customAspectW), Math.max(0.01, spec.customAspectH)]
       : ASPECT_RATIOS[spec.aspect];
-    // Ratio of the full output (eye-target ratios double the width).
-    const rw = spec.aspectTarget === 'eye' ? aw * 2 : aw;
-    const rh = ah;
+    // Ratio of the full output (eye-target ratios are multiplied by the tiling).
+    const rw = spec.aspectTarget === 'eye' ? aw * tileX : aw;
+    const rh = spec.aspectTarget === 'eye' ? ah * tileY : ah;
     const short = RESOLUTION_SHORT_SIDE[spec.resolution];
     if (rw <= rh) {
       width = short;
@@ -81,10 +95,16 @@ export function resolveOutputSize(spec: OutputSizeSpec): OutputSize {
       height = short;
       width = (short * rw) / rh;
     }
-    width = even(Math.min(width, MAX_OUTPUT_SIDE));
-    height = Math.max(1, Math.round(Math.min(height, MAX_OUTPUT_SIDE)));
+    width = Math.round(Math.min(width, MAX_OUTPUT_SIDE));
+    height = Math.round(Math.min(height, MAX_OUTPUT_SIDE));
   }
-  return { width, height, eyeWidth: width / 2, eyeHeight: height };
+  width = Math.max(1, width);
+  height = Math.max(1, height);
+  // Even dimensions where the format splits or squeezes an axis by two, and
+  // for video (H.264 / VP9 require even frame sizes).
+  if (format === 'sbs' || format === 'half-sbs' || format === 'wiggle') width = evenUp(width);
+  if (format === 'ou' || format === 'half-ou' || format === 'wiggle') height = evenUp(height);
+  return { width, height, eyeWidth: width / tileX, eyeHeight: height / tileY };
 }
 
 function clampSide(v: number): number {

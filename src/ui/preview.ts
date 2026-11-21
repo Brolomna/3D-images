@@ -7,9 +7,9 @@
  * original + crop editor) is drawn from it with a shared zoom / pan state.
  */
 import type { CropRect } from '../core/layout';
-import type { Arrangement } from '../core/settings';
+import type { RGBAImage } from '../core/types';
 
-export type ViewMode = 'sbs' | 'compare' | 'wiggle' | 'diff' | 'anaglyph' | 'crop';
+export type ViewMode = 'sbs' | 'compare' | 'wiggle' | 'diff' | 'anaglyph' | 'depth' | 'crop';
 
 interface Frame {
   composite: HTMLCanvasElement;
@@ -17,6 +17,7 @@ interface Frame {
   right: HTMLCanvasElement;
   eyeW: number;
   eyeH: number;
+  depth?: HTMLCanvasElement;
   diff?: HTMLCanvasElement;
   anaglyph?: HTMLCanvasElement;
   leftData: ImageData;
@@ -47,6 +48,8 @@ export class PreviewRenderer {
   private cropAspect = 1; // eye aspect (w/h) in pixels
   private wiggleOn = false;
   private wiggleTimer = 0;
+  private wiggleMs = 140;
+  private animateOutput = false;
   private hover: { x: number; y: number } | null = null;
   private drag: { kind: 'pan' | Handle; sx: number; sy: number; cx: number; cy: number; crop: CropRect | null } | null = null;
   private dpr = 1;
@@ -65,26 +68,35 @@ export class PreviewRenderer {
     this.bindPointer();
   }
 
-  /** Upload a new rendered composite (done once per worker result). */
-  setOutput(image: ImageData, arrangement: Arrangement): void {
-    const eyeW = image.width / 2;
-    const eyeH = image.height;
-    const composite = this.frame?.composite.width === image.width && this.frame.composite.height === image.height
-      ? this.frame.composite : makeCanvas(image.width, image.height);
-    composite.getContext('2d')!.putImageData(image, 0, 0);
-    const reuse = this.frame && this.frame.eyeW === eyeW && this.frame.eyeH === eyeH;
-    const left = reuse ? this.frame!.left : makeCanvas(eyeW, eyeH);
-    const right = reuse ? this.frame!.right : makeCanvas(eyeW, eyeH);
-    const lx = arrangement === 'parallel' ? 0 : eyeW;
-    const rx = arrangement === 'parallel' ? eyeW : 0;
-    const cctx = composite.getContext('2d', { willReadFrequently: true })!;
-    const leftData = cctx.getImageData(lx, 0, eyeW, eyeH);
-    const rightData = cctx.getImageData(rx, 0, eyeW, eyeH);
-    left.getContext('2d')!.putImageData(leftData, 0, 0);
-    right.getContext('2d')!.putImageData(rightData, 0, 0);
-    this.frame = { composite, left, right, eyeW, eyeH, leftData, rightData };
+  /** Upload newly rendered eye views + composed output (once per worker result). */
+  setViews(left: RGBAImage, right: RGBAImage, depth: RGBAImage | null, output: RGBAImage, animateOutput: boolean): void {
+    const toCanvas = (img: RGBAImage, prev?: HTMLCanvasElement) => {
+      const c = prev && prev.width === img.width && prev.height === img.height ? prev : makeCanvas(img.width, img.height);
+      c.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
+      return c;
+    };
+    const f = this.frame;
+    this.frame = {
+      composite: toCanvas(output, f?.composite),
+      left: toCanvas(left, f?.left),
+      right: toCanvas(right, f?.right),
+      depth: depth ? toCanvas(depth, f?.depth) : undefined,
+      eyeW: left.width,
+      eyeH: left.height,
+      leftData: new ImageData(left.data as Uint8ClampedArray<ArrayBuffer>, left.width, left.height),
+      rightData: new ImageData(right.data as Uint8ClampedArray<ArrayBuffer>, right.width, right.height),
+    };
+    this.animateOutput = animateOutput;
+    this.setWiggle(this.mode === 'wiggle' || (this.mode === 'sbs' && animateOutput));
     this.drawThumbs();
     this.requestDraw();
+  }
+
+  /** Wiggle frame duration (ms). */
+  setWiggleSpeed(ms: number): void {
+    if (ms === this.wiggleMs) return;
+    this.wiggleMs = ms;
+    this.setWiggle(this.mode === 'wiggle' || (this.mode === 'sbs' && this.animateOutput));
   }
 
   setOriginal(bmp: ImageBitmap | null): void {
@@ -105,7 +117,7 @@ export class PreviewRenderer {
 
   setMode(mode: ViewMode): void {
     this.mode = mode;
-    this.setWiggle(mode === 'wiggle');
+    this.setWiggle(mode === 'wiggle' || (mode === 'sbs' && this.animateOutput));
     this.requestDraw();
   }
 
@@ -157,7 +169,7 @@ export class PreviewRenderer {
       this.wiggleTimer = window.setInterval(() => {
         this.wiggleOn = !this.wiggleOn;
         this.requestDraw();
-      }, 160);
+      }, this.wiggleMs);
     }
   }
 
@@ -172,7 +184,10 @@ export class PreviewRenderer {
     }
     const f = this.frame;
     if (!f) return null;
-    if (this.mode === 'sbs') return { w: f.eyeW * 2, h: f.eyeH, panes: 1 };
+    if (this.mode === 'sbs') {
+      if (this.animateOutput) return { w: f.eyeW, h: f.eyeH, panes: 1 };
+      return { w: f.composite.width, h: f.composite.height, panes: 1 };
+    }
     if (this.mode === 'compare') return { w: f.eyeW, h: f.eyeH, panes: 2 };
     return { w: f.eyeW, h: f.eyeH, panes: 1 };
   }
@@ -246,7 +261,7 @@ export class PreviewRenderer {
       this.drawCropOverlay(g, o.x, o.y, w * s, h * s);
     } else if (f) {
       if (this.mode === 'sbs') {
-        drawPane(f.composite, 0);
+        drawPane(this.animateOutput ? (this.wiggleOn ? f.right : f.left) : f.composite, 0);
       } else if (this.mode === 'compare') {
         const a = drawPane(f.left, 0);
         drawPane(f.right, view.areaW + view.gap);
@@ -270,6 +285,9 @@ export class PreviewRenderer {
       } else if (this.mode === 'wiggle') {
         drawPane(this.wiggleOn ? f.right : f.left, 0);
         this.label(g, this.wiggleOn ? 'R' : 'L', 8, 8, this.wiggleOn ? '#40d0ff' : '#ff5d5d');
+      } else if (this.mode === 'depth') {
+        if (f.depth) drawPane(f.depth, 0);
+        else this.message(g, rect.width, rect.height, 'Depth is off or still being analysed');
       } else if (this.mode === 'diff') {
         drawPane(this.derived('diff'), 0);
       } else if (this.mode === 'anaglyph') {
@@ -277,6 +295,14 @@ export class PreviewRenderer {
       }
     }
     this.updateReadout();
+  }
+
+  private message(g: CanvasRenderingContext2D, w: number, h: number, text: string) {
+    g.fillStyle = '#9097a5';
+    g.font = '13px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, w / 2, h / 2);
   }
 
   private label(g: CanvasRenderingContext2D, t: string, x: number, y: number, color: string) {
@@ -508,7 +534,7 @@ export class PreviewRenderer {
     const f = this.frame;
     draw(this.thumbs.left, f?.left ?? null, f?.eyeW ?? 0, f?.eyeH ?? 0);
     draw(this.thumbs.right, f?.right ?? null, f?.eyeW ?? 0, f?.eyeH ?? 0);
-    draw(this.thumbs.sbs, f?.composite ?? null, (f?.eyeW ?? 0) * 2, f?.eyeH ?? 0);
+    draw(this.thumbs.sbs, f?.composite ?? null, f?.composite.width ?? 0, f?.composite.height ?? 0);
   }
 
   redrawThumbs() {

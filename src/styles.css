@@ -227,3 +227,17 @@ input[type='range'] { width: 100%; accent-color: var(--accent); height: 22px; ma
   #btn-reset { display: none; }
   .thumbs { gap: 6px; }
 }
+
+/* Additions: depth, checks, batch */
+.stack { display: grid; gap: 10px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.check input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.depth-status { font: 12px/1.4 var(--mono); color: var(--muted); display: flex; align-items: center; gap: 8px; min-height: 18px; }
+.depth-status .bar { flex: 1; height: 4px; border-radius: 2px; background: #2a2e37; overflow: hidden; }
+.depth-status .bar i { display: block; height: 100%; background: var(--accent); }
+.depth-status.ok { color: #7bd88f; }
+.depth-status.err { color: var(--danger); }
+.batch-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 12px; color: var(--muted); max-height: 180px; overflow-y: auto; }
+.batch-list li.done { color: #7bd88f; }
+.batch-list li.fail { color: var(--danger); }
+.batch-list li.active { color: var(--text); }

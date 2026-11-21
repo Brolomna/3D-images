@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0f12" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <meta name="description" content="Convert ordinary photographs into side-by-side stereoscopic 3D images with precise, configurable pixel displacement." />
   <title>Stereo 3D Photo Generator</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='13' height='20' rx='2' fill='%23ff5d5d'/%3E%3Crect x='17' y='6' width='13' height='20' rx='2' fill='%2340d0ff'/%3E%3C/svg%3E" />
@@ -19,7 +22,7 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <button id="btn-reset" class="btn ghost" title="Restore the default 1080×1920 · 14 px · 0.6 px configuration">Reset defaults</button>
+        <button id="btn-reset" class="btn ghost" title="Restore the default configuration">Reset defaults</button>
         <button id="btn-export-top" class="btn primary" disabled>Export</button>
       </div>
     </header>
@@ -36,6 +39,14 @@
         </label>
         <button id="btn-sample" class="btn small ghost wide">Use sample image</button>
         <dl id="image-info" class="info hidden"></dl>
+      </section>
+
+      <section class="group">
+        <h2>Batch</h2>
+        <input id="batch-input" type="file" multiple hidden />
+        <button id="btn-batch" class="btn small wide">Process multiple photos → ZIP</button>
+        <p class="hint">Applies the current settings to every photo (manual crop falls back to Fill) and downloads one ZIP.</p>
+        <ol id="batch-list" class="batch-list hidden"></ol>
       </section>
 
       <section class="group">
@@ -113,11 +124,12 @@
     <main class="stage-wrap" aria-label="Preview">
       <div class="stage-toolbar">
         <div class="seg small" id="view-mode" role="tablist" aria-label="Preview mode">
-          <button data-value="sbs" title="Final side-by-side output">Side-by-side</button>
+          <button data-value="sbs" title="Final output in the selected format">Output</button>
           <button data-value="compare" title="Left and right eye with synchronised zoom">Compare L/R</button>
           <button data-value="wiggle" title="Alternate left/right to see the displacement">Wiggle</button>
           <button data-value="diff" title="Absolute difference between the eyes ×4">Difference</button>
           <button data-value="anaglyph" title="Red/cyan check view">Anaglyph</button>
+          <button data-value="depth" title="Estimated depth map (bright = near)">Depth</button>
           <button data-value="crop" title="Original photograph with visible region">Original</button>
         </div>
         <div class="zoom">
@@ -132,7 +144,7 @@
           <div class="empty-art" aria-hidden="true"><i></i><i></i></div>
           <p>Upload a photograph to create a side-by-side stereoscopic image.</p>
           <div class="empty-actions"><button id="btn-upload-empty" class="btn primary">Upload photo</button><button id="btn-sample-empty" class="btn ghost">Try sample</button></div>
-          <p class="hint">Default: 1080 × 1920 · right eye shifted 14 px horizontally and 0.6 px vertically · PNG</p>
+          <p class="hint">Default: 1080 × 1920 side-by-side · automatic depth · base offset 14 px · PNG</p>
         </div>
         <div id="busy" class="busy hidden"><span class="spinner"></span><span id="busy-text">Processing…</span></div>
         <div id="pixel-readout" class="pixel-readout hidden"></div>
@@ -141,13 +153,33 @@
         <figure data-thumb="original"><canvas id="thumb-original"></canvas><figcaption>Original</figcaption></figure>
         <figure data-thumb="left"><canvas id="thumb-left"></canvas><figcaption>Left eye</figcaption></figure>
         <figure data-thumb="right"><canvas id="thumb-right"></canvas><figcaption>Right eye</figcaption></figure>
-        <figure data-thumb="sbs"><canvas id="thumb-sbs"></canvas><figcaption>Side-by-side</figcaption></figure>
+        <figure data-thumb="sbs"><canvas id="thumb-sbs"></canvas><figcaption>Output</figcaption></figure>
       </div>
       <div id="status" class="status" aria-live="polite"></div>
     </main>
 
     <!-- RIGHT PANEL: stereo + export -->
     <aside class="panel panel-right" aria-label="Stereo and export">
+      <section class="group">
+        <h2 class="with-toggle">Automatic depth
+          <label class="switch"><input id="depth-enabled" type="checkbox" /><span></span><em>On</em></label>
+        </h2>
+        <div id="depth-status" class="depth-status"></div>
+        <div id="depth-controls" class="stack">
+          <label class="slider"><span>Depth strength <output id="depth-strength-out"></output></span>
+            <input id="depth-strength" type="range" min="0" max="60" step="0.5" />
+          </label>
+          <label class="slider"><span>Focus plane <output id="depth-focus-out"></output></span>
+            <input id="depth-focus" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <label class="slider"><span>Smoothing <output id="depth-smooth-out"></output></span>
+            <input id="depth-smooth" type="range" min="0" max="3" step="0.05" />
+          </label>
+          <label class="check"><input id="depth-invert" type="checkbox" /> Invert depth (near ↔ far)</label>
+        </div>
+        <p class="hint">The app estimates a depth map of the photo on your device (Depth Anything V2; ~27 MB model, downloaded once). Near parts get more disparity than far parts, so the subject stands out from the background. Focus plane = depth that stays at the base offset.</p>
+      </section>
+
       <section class="group">
         <h2>Horizontal offset</h2>
         <div class="slider-row">
@@ -158,7 +190,7 @@
           <button data-value="0">0</button><button data-value="5">5</button><button data-value="10">10</button>
           <button data-value="14">14</button><button data-value="20">20</button><button data-value="30">30</button>
         </div>
-        <p class="hint">Horizontal displacement is the difference between the left- and right-eye views (binocular disparity). Larger values increase the perceived stereoscopic depth separation; measured in output pixels.</p>
+        <p class="hint">Uniform horizontal displacement between the left- and right-eye views (binocular disparity), in output pixels. It sets where the whole picture sits in depth; with automatic depth on, the per-pixel depth disparity is added to it.</p>
       </section>
 
       <section class="group">
@@ -199,6 +231,7 @@
           <button data-value="extend" title="Fill revealed edges with surrounding image, then edge pixels">Extend</button>
           <button data-value="crop" title="Zoom both views equally so no edge is revealed">Crop</button>
         </div>
+        <label class="check"><input id="edge-mask" type="checkbox" /> Stereo window: mask edge strips seen by one eye only</label>
         <div id="offset-summary" class="readout"></div>
       </section>
 
@@ -224,17 +257,55 @@
 
       <section class="group">
         <h2>Export</h2>
-        <div class="seg small" data-setting="exportFormat" role="radiogroup" aria-label="Export format">
-          <button data-value="png">PNG</button>
-          <button data-value="jpeg">JPEG</button>
-          <button data-value="webp">WEBP</button>
+        <label class="field"><span>Stereo format</span>
+          <select id="format">
+            <option value="sbs">Side-by-side (full)</option>
+            <option value="half-sbs">Half side-by-side (3D TV / VR)</option>
+            <option value="ou">Over / under</option>
+            <option value="half-ou">Half over / under</option>
+            <option value="anaglyph">Anaglyph (red / cyan)</option>
+            <option value="wiggle">Wiggle animation (GIF / video)</option>
+            <option value="mpo">MPO (3D camera / display)</option>
+          </select>
+        </label>
+        <div id="still-options">
+          <div class="seg small" data-setting="exportFormat" role="radiogroup" aria-label="Image file type">
+            <button data-value="png">PNG</button>
+            <button data-value="jpeg">JPEG</button>
+            <button data-value="webp">WEBP</button>
+          </div>
+        </div>
+        <label id="anaglyph-field" class="field hidden"><span>Anaglyph colours</span>
+          <select id="anaglyph-method">
+            <option value="dubois">Dubois (best colour, least ghosting)</option>
+            <option value="half-color">Half colour</option>
+            <option value="color">Full colour</option>
+            <option value="gray">Grey</option>
+          </select>
+        </label>
+        <div id="wiggle-options" class="stack hidden">
+          <div class="seg small" data-setting="wiggleFile" role="radiogroup" aria-label="Animation file type">
+            <button data-value="gif">GIF</button>
+            <button data-value="video">Video (MP4)</button>
+          </div>
+          <label class="field"><span>Motion</span>
+            <select id="wiggle-frames">
+              <option value="2">Classic flip (2 frames)</option>
+              <option value="6">Smooth (6 frames)</option>
+              <option value="12">Extra smooth (12 frames)</option>
+            </select>
+          </label>
+          <label class="slider"><span>Frame time <output id="wiggle-ms-out"></output></span>
+            <input id="wiggle-ms" type="range" min="40" max="400" step="10" />
+          </label>
         </div>
         <label id="quality-field" class="slider hidden"><span>Quality <output id="quality-out"></output></span>
           <input id="quality" type="range" min="0.5" max="1" step="0.01" />
         </label>
         <div id="export-readout" class="readout"></div>
-        <button id="btn-export" class="btn primary wide" disabled>Export image</button>
-        <p class="hint">PNG is lossless. Export always renders at the full output resolution, identical to a full-resolution preview.</p>
+        <button id="btn-export" class="btn primary wide" disabled>Export</button>
+        <button id="btn-share" class="btn small ghost wide">Copy settings link</button>
+        <p class="hint">Exports always render at full output resolution. PNG is lossless; the Output preview shows exactly what is exported.</p>
       </section>
     </aside>
   </div>

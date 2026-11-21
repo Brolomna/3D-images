@@ -1,17 +1,22 @@
 /**
- * End-to-end smoke test: run with `npm run test:e2e`.
- * Starts a Vite dev server, uploads generated test images (PNG, JPEG-free formats + TIFF),
- * checks the live preview, exports a PNG and verifies it pixel-for-pixel
- * against the same pipeline executed in Node (determinism across runtimes).
+ * End-to-end test of the real UI in Chromium (run with `npm run test:e2e`).
  *
-
+ *  - uploads generated PNG + TIFF photos, waits for automatic depth analysis
+ *    (downloads the depth model from Hugging Face on first run), exports and
+ *    verifies the PNG is byte-identical to the same pipeline run in Node
+ *  - exports every stereo format (half-SBS, over/under, anaglyph, wiggle GIF
+ *    + video, MPO) and validates the files
+ *  - batch ZIP, share links, presets, view modes, mobile layout
+ *  - production build: service worker + manifest (offline / installable)
  */
 import { createRequire } from 'node:module';
-import { createServer } from 'vite';
+import { execSync } from 'node:child_process';
+import { createServer, preview } from 'vite';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decode, encode } from 'fast-png';
+import { unzipSync } from 'fflate';
 import UTIF from 'utif';
 
 // Use the project's Playwright if installed, else the globally available one.
@@ -62,14 +67,19 @@ await server.listen();
 const { StereoPipeline } = await server.ssrLoadModule('/src/core/pipeline.ts');
 const { DEFAULT_SETTINGS, cloneSettings } = await server.ssrLoadModule('/src/core/settings.ts');
 
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+// Route the browser through the sandbox's HTTPS proxy when there is one.
+const proxy = process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY, bypass: 'localhost,127.0.0.1' } } : {};
+const browser = await chromium.launch(proxy);
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+const page = await context.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-await page.goto('http://localhost:5199/');
-await page.evaluate(() => localStorage.clear());
-await page.reload();
+// The dev server may re-optimise dependencies and reload once on first visit.
+await page.goto('http://localhost:5199/', { waitUntil: 'networkidle' });
+await page.waitForTimeout(1500);
+await page.evaluate(() => localStorage.clear()).catch(() => {});
+await page.reload({ waitUntil: 'networkidle' });
 
 let failures = 0;
 const check = (cond, msg) => { console.log(`${cond ? '✓' : '✗'} ${msg}`); if (!cond) failures++; };
@@ -77,57 +87,70 @@ const check = (cond, msg) => { console.log(`${cond ? '✓' : '✗'} ${msg}`); if
 async function waitRender() {
   await page.waitForFunction(() => window.__stereo?.info, null, { timeout: 30000 });
   await page.waitForTimeout(100);
-  await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 60000, polling: 50 });
+  await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 120000, polling: 50 });
+}
+async function waitDepth() {
+  await page.waitForFunction(() => ['ready', 'error'].includes(window.__stereo.depth), null, { timeout: 300000, polling: 200 });
+  await waitRender();
+}
+async function exportFile(name) {
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 180000 }), page.click('#btn-export')]);
+  const path = join(out, name ?? dl.suggestedFilename());
+  await dl.saveAs(path);
+  await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 60000 });
+  return { path, name: dl.suggestedFilename(), bytes: readFileSync(path) };
+}
+async function setSelect(id, value) {
+  await page.selectOption(id, value);
+  await waitRender();
 }
 
+// ── 1. Default pipeline with automatic depth: browser export == Node reference ──
 for (const c of [...cases, tiff]) {
   await page.setInputFiles('#file-input', c.file);
-  try {
-    await page.waitForFunction((n) => document.getElementById('image-info').textContent.includes(n), c.name === 'tiff' ? 'sample' : c.name, { timeout: 30000 });
-  } catch (e) {
-    console.log('page errors:', errors, await page.evaluate(() => document.getElementById('toast').textContent));
-    throw e;
-  }
-  await waitRender();
+  await page.waitForFunction((n) => document.getElementById('image-info').textContent.includes(n), c.name === 'tiff' ? 'sample' : c.name, { timeout: 30000 });
+  await waitDepth();
+  const state = await page.evaluate(() => window.__stereo.depth);
+  check(state === 'ready', `${c.name}: depth map estimated automatically (${state})`);
   const info = await page.evaluate(() => window.__stereo.info);
-  check(info.fullWidth === 1080 && info.fullHeight === 1920, `${c.name}: default output 1080×1920 (got ${info.fullWidth}×${info.fullHeight})`);
-  check(Math.abs(info.dx - 14) < 1e-9 && Math.abs(info.dy - 0.6) < 1e-9, `${c.name}: default offsets 14 / 0.6 px`);
+  check(info.fullWidth === 1080 && info.fullHeight === 1920, `${c.name}: default output 1080×1920`);
+  check(info.dx === 14 && info.dy === 0 && info.depthUsed, `${c.name}: defaults 14 px / 0 px with depth`);
 
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export')]);
-  const path = join(out, `${c.name}_export.png`);
-  await dl.saveAs(path);
-  const png = decode(readFileSync(path));
+  const file = await exportFile(`${c.name}_export.png`);
+  const png = decode(file.bytes);
   check(png.width === 1080 && png.height === 1920, `${c.name}: exported PNG is 1080×1920`);
 
-  // Same pipeline in Node on the same source pixels must give identical bytes.
+  const dm = await page.evaluate(() => { const m = window.__stereo.depthMap; return { width: m.width, height: m.height, data: Array.from(m.data) }; });
   const p = new StereoPipeline();
   p.setSource({ width: c.w, height: c.h, data: new Uint8ClampedArray(c.data) });
+  p.setDepth({ width: dm.width, height: dm.height, data: Float32Array.from(dm.data) });
   const ref = p.render(cloneSettings(DEFAULT_SETTINGS), 1).output.data;
-  const got = png.data;
-  const ch = png.channels;
+  const got = png.data, ch = png.channels;
   let diff = 0;
   for (let i = 0, j = 0; i < ref.length; i += 4, j += ch) {
     if (ref[i] !== got[j] || ref[i + 1] !== got[j + 1] || ref[i + 2] !== got[j + 2]) diff++;
   }
-  check(diff === 0, `${c.name}: browser export identical to reference render (${diff} differing pixels)`);
+  check(diff === 0, `${c.name}: browser export identical to Node reference (${diff} differing pixels)`);
   await page.screenshot({ path: join(out, `${c.name}_ui.png`) });
 }
+await page.click('#view-mode button[data-value="depth"]');
+await waitRender();
+await page.screenshot({ path: join(out, 'depth_view.png') });
+await page.click('#view-mode button[data-value="sbs"]');
 
-// Interactivity: change offset → only displacement re-runs (cached frame).
+// ── 2. Interactivity: offset change re-uses the cached frame ──
 await page.fill('#h-offset-num', '30');
 await page.dispatchEvent('#h-offset-num', 'input');
 await waitRender();
 let info = await page.evaluate(() => window.__stereo.info);
-check(Math.abs(info.dx - 30) < 1e-9 && info.baseReused, `offset change re-uses cached frame (dx=${info.dx}, ${Math.round(info.ms)} ms)`);
+check(info.dx === 30 && info.baseReused, `offset change re-uses cached frame (${Math.round(info.ms)} ms)`);
 
-// Zero displacement → halves identical (export).
+// ── 3. Every export format ──
+await page.click('#depth-enabled + span'); // depth off → exact zero test
 await page.fill('#h-offset-num', '0'); await page.dispatchEvent('#h-offset-num', 'input');
-await page.click('#v-enabled + span');
 await waitRender();
 {
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export')]);
-  const path = join(out, 'zero_export.png'); await dl.saveAs(path);
-  const png = decode(readFileSync(path));
+  const png = decode((await exportFile('zero_export.png')).bytes);
   const w = png.width, ch = png.channels, half = w / 2;
   let diff = 0;
   for (let y = 0; y < png.height; y++) for (let x = 0; x < half; x++) for (let k = 0; k < 3; k++) {
@@ -135,19 +158,83 @@ await waitRender();
   }
   check(diff === 0, 'zero displacement: both halves identical');
 }
+await page.click('#depth-enabled + span'); // depth back on
+await page.fill('#h-offset-num', '14'); await page.dispatchEvent('#h-offset-num', 'input');
+await waitDepth();
 
-// Aspect ratio + resolution presets.
+for (const [format, w, h] of [['half-sbs', 1080, 1920], ['ou', 1080, 1920], ['half-ou', 1080, 1920], ['anaglyph', 1080, 1920]]) {
+  await setSelect('#format', format);
+  const f = await exportFile();
+  const png = decode(f.bytes);
+  check(png.width === w && png.height === h && f.name.includes(format), `${format}: ${f.name} is ${png.width}×${png.height}`);
+  await page.screenshot({ path: join(out, `format_${format}.png`) });
+}
+await setSelect('#format', 'mpo');
+{
+  const f = await exportFile();
+  const b = f.bytes;
+  const starts = [];
+  for (let i = 0; i < b.length - 1; i++) if (b[i] === 0xff && b[i + 1] === 0xd8) starts.push(i);
+  const hasMpf = b.includes(Buffer.from('MPF\0'));
+  check(f.name.endsWith('.mpo') && starts.length >= 2 && hasMpf, `mpo: ${f.name} contains ${starts.length} JPEG images with MPF index`);
+}
+await setSelect('#format', 'wiggle');
+await setSelect('#wiggle-frames', '6');
+{
+  const f = await exportFile();
+  check(f.name.endsWith('.gif') && f.bytes.subarray(0, 6).toString() === 'GIF89a', `wiggle GIF: ${f.name} (${(f.bytes.length / 1e6).toFixed(1)} MB)`);
+}
+await page.click('.seg[data-setting="wiggleFile"] button[data-value="video"]');
+await waitRender();
+{
+  const res = await Promise.race([
+    exportFile().then((f) => ({ f })),
+    page.waitForSelector('#toast.error:not(.hidden)', { timeout: 180000 }).then(async () => ({ err: await page.textContent('#toast') })),
+  ]);
+  if (res.f) {
+    const isMp4 = res.f.bytes.subarray(4, 8).toString() === 'ftyp';
+    const isWebm = res.f.bytes.readUInt32BE(0) === 0x1a45dfa3;
+    check((isMp4 && res.f.name.endsWith('.mp4')) || (isWebm && res.f.name.endsWith('.webm')), `wiggle video: ${res.f.name} (${isMp4 ? 'MP4/H.264' : 'WebM'})`);
+  } else {
+    check(/WebCodecs|cannot encode/.test(res.err), `wiggle video unsupported in this browser build, clear message shown: "${res.err}"`);
+  }
+}
+await setSelect('#format', 'sbs');
+
+// ── 4. Batch → ZIP ──
+{
+  const [dl] = await Promise.all([
+    page.waitForEvent('download', { timeout: 300000 }),
+    page.setInputFiles('#batch-input', [cases[0].file, cases[1].file, tiff.file]),
+  ]);
+  const path = join(out, 'batch.zip');
+  await dl.saveAs(path);
+  const entries = unzipSync(readFileSync(path));
+  const names = Object.keys(entries);
+  const ok = names.length === 3 && names.every((n) => decode(entries[n]).width === 1080);
+  check(ok, `batch ZIP has 3 PNG exports (${names.join(', ')})`);
+  await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 60000 });
+}
+
+// ── 5. Presets, share links, modes, crop, reset ──
 for (const [aspect, res, w, h] of [['16:9', '4k', 3840, 2160], ['1:1', '720p', 720, 720], ['4:3', '1080p', 1440, 1080]]) {
   await page.click(`.seg[data-setting="aspect"] button[data-value="${aspect}"]`);
-  await page.selectOption('#resolution', res);
-  await waitRender();
+  await setSelect('#resolution', res);
   info = await page.evaluate(() => window.__stereo.info);
   check(info.fullWidth === w && info.fullHeight === h, `${aspect} @ ${res} → ${info.fullWidth}×${info.fullHeight}`);
 }
-// Fit mode, view modes, manual crop, mobile layout screenshots.
+await page.fill('#h-offset-num', '22'); await page.dispatchEvent('#h-offset-num', 'input');
+await waitRender();
+await page.waitForTimeout(500);
+const hash = await page.evaluate(() => location.hash);
+const fresh = await context.newPage();
+await fresh.goto(`http://localhost:5199/${hash}`);
+const restored = await fresh.evaluate(() => [window.__stereo.settings.horizontalOffset, window.__stereo.settings.output.aspect]);
+check(hash.startsWith('#s=') && restored[0] === 22 && restored[1] === '4:3', `share link restores settings (${hash.length} chars)`);
+await fresh.close();
+
 await page.click('.seg[data-setting="fit"] button[data-value="fit"]'); await waitRender();
-await page.screenshot({ path: join(out, 'fit_mode.png') });
-for (const m of ['compare', 'wiggle', 'diff', 'anaglyph', 'crop']) {
+for (const m of ['compare', 'wiggle', 'diff', 'anaglyph', 'depth', 'crop']) {
   await page.click(`#view-mode button[data-value="${m}"]`);
   await page.waitForTimeout(150);
 }
@@ -155,15 +242,37 @@ await page.click('.seg[data-setting="fit"] button[data-value="manual"]'); await 
 await page.screenshot({ path: join(out, 'manual_crop.png') });
 await page.click('#btn-reset'); await waitRender();
 info = await page.evaluate(() => window.__stereo.info);
-check(info.fullWidth === 1080 && info.dx === 14, 'reset restores defaults');
+check(info.fullWidth === 1080 && info.dx === 14 && info.dy === 0, 'reset restores defaults');
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(400);
 await page.screenshot({ path: join(out, 'mobile.png'), fullPage: true });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 check(overflow <= 0, `mobile layout has no horizontal scroll (${overflow}px)`);
-
 check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
-await browser.close();
 await server.close();
+
+// ── 6. Production build: installable + offline ──
+// Build in a separate process: the dev server above set NODE_ENV=development.
+execSync('npx vite build --logLevel error', { cwd: root, stdio: 'inherit', env: { ...process.env, NODE_ENV: 'production' } });
+const prev = await preview({ root, preview: { port: 5198, strictPort: true }, logLevel: 'error' });
+{
+  const ctx2 = await browser.newContext();
+  const p2 = await ctx2.newPage();
+  await p2.goto('http://localhost:5198/', { waitUntil: 'load' });
+  let sw = false;
+  for (let i = 0; i < 40 && !sw; i++) {
+    sw = await p2.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).some((r) => r.active?.state === 'activated'));
+    if (!sw) await p2.waitForTimeout(500);
+  }
+  const manifest = await p2.evaluate(async () => (await fetch(document.querySelector('link[rel=manifest]').href)).json());
+  check(sw, 'service worker active (offline support)');
+  check(manifest.icons.length >= 2 && manifest.display === 'standalone', 'web app manifest is installable');
+  await ctx2.setOffline(true);
+  const title = await p2.reload().then(() => p2.title(), (e) => `failed: ${e.message.split('\n')[0]}`);
+  check(title === 'Stereo 3D Photo Generator', `app loads offline (title "${title}")`);
+  await ctx2.close();
+}
+await prev.close();
+await browser.close();
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll e2e checks passed');
 process.exit(failures ? 1 : 0);

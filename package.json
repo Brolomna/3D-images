@@ -19,7 +19,12 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
     "fast-png": "^6.3.0",
-    "utif": "^3.1.0"
+    "fflate": "^0.8.3",
+    "gifenc": "^1.0.3",
+    "mp4-muxer": "^5.2.2",
+    "utif": "^3.1.0",
+    "webm-muxer": "^5.1.4"
   }
 }

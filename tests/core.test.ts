@@ -117,11 +117,12 @@ describe('stereo views', () => {
     }
   });
 
-  it('default 14 px / 0.6 px displaces the RIGHT eye only', () => {
+  it('default 14 px / 0 px displaces the RIGHT eye only', () => {
     const src = photo(540, 1920, 8);
     const r = render(src, DEFAULT_SETTINGS);
+    expect(DEFAULT_SETTINGS.verticalOffset).toBe(0);
     expect(r.dx).toBe(14);
-    expect(r.dy).toBeCloseTo(0.6);
+    expect(r.dy).toBe(0);
     // Left eye is the untouched photo (source already at eye resolution).
     expect(imagesEqual(r.left, src)).toBe(true);
     expect(imagesEqual(r.right, src)).toBe(false);
@@ -246,7 +247,7 @@ describe('content preservation, determinism & export', () => {
   });
 
   it('preview at reduced scale scales the offsets proportionally', () => {
-    const r = render(photo(800, 1400, 19), settings(), 0.5);
+    const r = render(photo(800, 1400, 19), settings((s) => { s.verticalOffset = 0.6; }), 0.5);
     expect(r.left.width).toBe(270);
     expect(r.dx).toBeCloseTo(7);
     expect(r.dy).toBeCloseTo(0.3);

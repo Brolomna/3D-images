@@ -1,21 +1,27 @@
 # Stereo 3D Photo Generator
 
-Turns an ordinary 2D photograph into a **side-by-side stereoscopic image**. The app makes two copies of the same photo and shifts one of them by a set number of pixels. The resulting binocular disparity lets you perceive depth with parallel or cross-eyed free-viewing, or with a stereo viewer.
+**Live app: https://brolomna.github.io/3D-images/**
 
-This is **not** a Magic Eye / random-dot stereogram generator. It adds no patterns, textures, shadows or depth overlays, and uses no AI generation. The photo's content and colours are preserved; the only operations are deterministic resampling and translation.
+Turns an ordinary 2D photograph into a **stereoscopic 3D image**. The app creates a left-eye view and a right-eye view of the photo and packages them as side-by-side, half side-by-side, over/under, anaglyph, a wiggle animation or an MPO file.
+
+The app **estimates the photo's depth itself**. Near parts of the scene get more disparity than far parts, so the subject genuinely stands out from the background instead of the whole picture floating as one flat card.
+
+This is **not** a Magic Eye / random-dot stereogram generator. It adds no patterns, shadows or depth overlays, and it generates no new image content. Every output pixel is resampled from the original photo. The depth model only decides how far each pixel moves.
+
+Everything runs in the browser. Photos never leave your device.
 
 ## Default configuration
 
 | Setting | Default |
 |---|---|
-| Output | 1080 × 1920 PNG (9:16 @ 1080p) |
-| Layout | two 540 × 1920 views, left \| right |
+| Output | 1080 × 1920 PNG, side-by-side (two 540 × 1920 views, left \| right) |
 | Left image | original |
-| Right image | shifted **14 px** horizontally (to the right) and **0.6 px** vertically (down) |
+| Right image | depth-based disparity: base shift **14 px** right, ± up to 8 px from depth (strength 16 px, focus 50 %) |
+| Vertical offset | **0 px** |
 | Resize filter | Lanczos-3 |
 | Sub-pixel filter | Bicubic (Catmull-Rom) |
 
-**Reset defaults** restores this configuration at any time.
+**Reset defaults** restores this. Turning **Automatic depth** off gives the plain uniform shift, so 14 px / 0.6 px reproduces the original Howlfall treatment.
 
 ## Running
 
@@ -24,74 +30,107 @@ npm install
 npm run dev        # http://localhost:5173
 npm run build      # static site in dist/ (relative paths, host anywhere)
 npm test           # unit tests (Vitest)
-npm run test:e2e   # browser end-to-end test (Playwright + Chromium)
+npm run test:e2e   # browser end-to-end test (Playwright + Chromium; downloads the depth model)
 ```
 
 ### GitHub Pages
 
-`.github/workflows/pages.yml` tests, builds and deploys the app on every push to `main` (or manually from the Actions tab). One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**. The site is then served at `https://<owner>.github.io/<repo>/`.
-
-Everything runs client-side. Images are never uploaded to a server.
+`.github/workflows/pages.yml` tests, builds and deploys the app on every push to `main`. You can also run it manually from the Actions tab. It needs a one-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 
 ## Features
 
-- **Import:** JPEG, PNG, WEBP (native decoding with EXIF orientation and colour-profile conversion to sRGB) and TIFF (via UTIF). You can also drag & drop or paste. Images are processed at full source resolution.
-- **Aspect ratio:** 9:16, 1:1, 16:9, 4:3 or a custom ratio. The ratio can describe the whole output or each eye.
-- **Resolution:** 720p, 1080p, 1440p, 4K, 8K or custom pixel dimensions. The output width is always kept even, so both eyes are exactly the same size.
-- **Fitting:** *Fill* (cover), *Fit* (no cropping; the background is a blurred copy of the photo, a solid colour or transparency), *Stretch*, or *manual crop*. In manual crop you drag and resize an aspect-locked rectangle on the original. Image scale and crop-position sliders are also available.
-- **Stereo controls:**
-  - Horizontal offset: −100 to +100 px slider, numeric entry and presets 0/5/10/14/20/30.
-  - Vertical offset: −10 to +10 px with fractional steps, presets 0/0.3/0.6/1/2, an on/off switch, and a warning above 2 px.
-  - Offset direction, choice of which eye is displaced, and parallel or cross arrangement.
-  - Edge handling: *Extend* fills revealed edges with the surrounding real image, then edge pixels. *Crop* zooms both views equally so no edge is revealed.
+### Automatic depth
+- **Depth estimation:** [Depth Anything V2 (small, int8 ONNX)](https://huggingface.co/onnx-community/depth-anything-v2-small) runs on your device with transformers.js and ONNX Runtime WebAssembly, in a background worker.
+  - The ~27 MB model downloads from Hugging Face on first use and is cached by the browser.
+  - The ONNX Runtime binary is served with the app.
+- **Controls:**
+  - **Depth strength:** the extra disparity between the nearest and farthest point, in output pixels.
+  - **Focus plane:** the depth that stays at the base offset.
+  - **Smoothing:** reduces warping at depth edges.
+  - **Invert depth:** swaps near and far.
+- **Depth preview:** a dedicated *Depth* view shows the estimated map (bright = near).
+- **Fallback:** if depth estimation is unavailable (offline on first use, or very old browsers), the app falls back to the uniform shift and tells you.
+
+### Framing
+- **Import:** JPEG, PNG, WEBP (native decoding with EXIF orientation and colour-profile conversion to sRGB) and TIFF. You can also drag & drop or paste.
+- **Aspect ratio:** 9:16, 1:1, 16:9, 4:3 or custom, applied to the whole output or to each eye.
+- **Resolution:** 720p, 1080p, 1440p, 4K, 8K or custom pixel dimensions.
+- **Fitting:** Fill, Fit (with a blurred, solid-colour or transparent background), Stretch, or a manual crop with an aspect-locked rectangle. Image scale and crop-position sliders are also available.
+
+### Stereo controls
+- **Base horizontal offset:** −100 to +100 px, with presets 0/5/10/14/20/30.
+- **Vertical offset:** −10 to +10 px, fractional, with an on/off switch and a comfort warning above 2 px.
+- **Configuration:** offset direction, which eye is displaced, and parallel (L | R) or cross (R | L) arrangement.
+- **Edges:** *Extend* fills revealed edges with the surrounding real image. *Crop* zooms both views equally. An optional **stereo window mask** blanks the edge strips that only one eye can see.
 - **Interpolation:** nearest, bilinear, bicubic or Lanczos, chosen separately for resizing and for sub-pixel displacement.
-- **Preview modes:** side-by-side, synchronised L/R compare (shared zoom and pan, crosshair, pixel readout), wiggle, difference ×4, red/cyan anaglyph check, and the original with its visible region. Thumbnails show the original, left eye, right eye and final output. Zoom with the wheel, the buttons or a double-click.
-- **Keyboard:** ←/→ nudges the horizontal offset (hold Shift for 0.1 px steps). ↑/↓ nudges the vertical offset by 0.1 px. Ctrl/⌘+S exports.
-- **Export:** PNG (default; lossless pure-JS encoder, byte-exact), JPEG or WEBP with adjustable quality. Export always renders at full output resolution.
-- **Layout:** a dark, responsive interface. On narrow screens the controls stack vertically, with the preview first.
+
+### Export formats
+| Format | Output |
+|---|---|
+| Side-by-side | Two full views, W/2 × H each (PNG / JPEG / WEBP) |
+| Half side-by-side | Each eye rendered W × H, squeezed to W/2 (3D TVs, VR players) |
+| Over / under, Half over / under | Views stacked vertically |
+| Anaglyph | Red/cyan; Dubois (default), half-colour, full-colour or grey |
+| Wiggle | Animated GIF or video (MP4/H.264, WebM fallback). Classic 2-frame flip or a smooth 6/12-frame sweep, adjustable speed |
+| MPO | Multi-Picture JPEG with a left + right pair (CIPA DC-007), readable by 3D cameras, 3D displays, the Nintendo 3DS and StereoPhoto Maker |
+
+Exports always render at full resolution. The *Output* preview shows exactly what will be exported.
+
+### Workflow
+- **Batch:** process many photos with the current settings and download them as one ZIP. Dropping several files on the page does the same.
+- **Share links:** the settings that differ from the defaults are stored in the URL (`#s=…`), and *Copy settings link* shares them. Photos are never part of the link.
+- **Installable and offline:** the app is a PWA. After the first visit it works offline, and the depth model also works offline once it has been downloaded.
+- **Preview modes:** output, synchronised L/R compare with pixel readout, wiggle, difference ×4, anaglyph check, depth map, and the original with the crop editor.
+- **Keyboard:** ←/→ nudges the offset (hold Shift for 0.1 px steps). ↑/↓ nudges the vertical offset. Ctrl/⌘+S exports.
 
 ## How it works
 
 ```
 source ─► Resize/Crop ─► base frame (+ overscan margins, cached)
-                              ├─► Left view  = exact crop of the frame
-                              └─► Right view = H-displace ─► V-displace
-                                                   └─► Side-by-side composition ─► Preview / Export
+depth model ─► normalise/smooth ─► depth frame aligned with the base (cached)
+                              ├─► reference view = exact crop of the base frame
+                              └─► displaced view = per-pixel depth warp (or uniform shift) ─► vertical shift
+                                         └─► format composition ─► preview / export
 ```
-
-The modules in `src/` are:
 
 | # | Module | File |
 |---|---|---|
 | 1 | Image import | `io/import.ts` |
-| 2 | Resizing & cropping | `core/layout.ts` (geometry), `core/resample.ts` (separable streaming resampler), `core/background.ts` |
+| 2 | Resizing & cropping | `core/layout.ts`, `core/resample.ts`, `core/background.ts` |
 | 3–4 | Left / right view generators | `core/views.ts` |
-| 5–6 | Horizontal / vertical displacement processors | `core/displace.ts` |
-| 7 | Side-by-side composition | `core/compose.ts` |
+| 5–6 | Displacement processors (uniform + depth warp) | `core/displace.ts`, `core/depth.ts` |
+| — | Depth estimation | `depth/depth.worker.ts`, `depth/client.ts` |
+| 7 | Composition engine (all formats) | `core/compose.ts`, `core/formats.ts` |
 | 8 | Preview renderer | `ui/preview.ts` |
-| 9 | Export engine | `worker/stereo.worker.ts`, `core/encode.ts` |
+| 9 | Export engine | `worker/stereo.worker.ts`, `worker/video.ts`, `core/encode.ts`, `core/gif.ts`, `core/mpo.ts` |
 
 Key properties:
 
-- **Offsets are in output pixels.** The photo is resized **once** into the eye frame at output resolution, and the displacement is applied to that frame. The two views are never resized independently. When the live preview runs at a reduced scale (only above about 2.3 MP per eye), the offsets are scaled with it.
-- **Exact and sub-pixel shifts.** Integer offsets are pure pixel copies. Fractional offsets such as 0.6 px use a single fixed interpolation kernel, so the operation is a true translation.
-- **No blank borders.** The base frame is rendered with overscan margins that hold real neighbouring image content. Edge pixels are used only where the photo itself ends.
-- **Real-time editing.** The resized base frame is cached in a Web Worker. Changing an offset re-runs only the displacement and composition steps, which take about 50 ms at 1080 × 1920.
-- **Deterministic output.** The same input and settings always give identical bytes. The end-to-end test checks that a PNG exported from the browser matches the Node.js reference render byte for byte.
-- **Alpha handling.** Transparent PNGs are filtered with alpha weighting, which avoids dark fringes.
+- **Offsets in output pixels.** The photo is resized **once** into the eye frame at output resolution, and both views come from that same frame. They are never resized independently.
+- **Depth warp.** Each output pixel is inverse-mapped to a sub-pixel source position.
+  - Where two surfaces overlap, the nearer one wins.
+  - Holes revealed behind foreground objects are filled by mirroring the neighbouring background, never by smearing the object.
+  - With zero depth strength the warp reduces exactly to the uniform shift.
+- **Exact shifts.** Integer uniform offsets are pure pixel copies. Fractional offsets use a fixed interpolation kernel.
+- **No blank borders.** Overscan margins hold real neighbouring image content.
+- **Real-time editing.** The resized frame and the aligned depth frame are cached. Changing an offset or the depth strength re-runs only the warp and composition steps.
+- **Deterministic output.** For a given photo and depth map, the same settings always give identical bytes. The end-to-end test checks that a browser export matches the Node.js reference render byte for byte.
 
 ## Tests
 
-`tests/core.test.ts` (59 tests) uses synthetic portrait, poster, landscape, illustration, dark, bright, text/logo and transparent images. It verifies that:
+- `tests/core.test.ts` covers geometry, kernels, exact and fractional displacement, borders, content preservation, determinism and lossless PNG.
+- `tests/features.test.ts` covers:
+  - depth normalisation;
+  - depth warp equal to the uniform shift for flat depth;
+  - occlusion and disocclusion handling;
+  - geometry and composition of every format;
+  - anaglyph colour mapping and wiggle frames;
+  - GIF and MPO structure;
+  - the stereo window mask;
+  - share-link round trips and robustness.
 
-1. Both halves are identical at zero displacement, in every fit mode.
-2. Integer horizontal displacement is pixel-exact (±1 to ±100 px).
-3. Fractional vertical displacement matches the analytic interpolation (0.3, 0.5, 0.6, −0.6 and 2.25 px).
-4. Both views always have identical dimensions, for every aspect ratio.
-5. Output size and aspect-ratio presets resolve correctly, for example 9:16 @ 1080p → 1080 × 1920 and 16:9 @ 8K → 7680 × 4320.
-6. No transparent or blank borders appear with the largest offsets, in either edge mode.
-7. The exported PNG decodes to exactly the preview buffer.
-8. Original pixels are unchanged: when the source matches the eye size, the left view equals the source for every filter.
-9. Rendering is deterministic, and offset changes reuse the cached frame.
-
-`e2e/smoke.mjs` drives the real UI in Chromium. It uploads PNG and TIFF files, checks the defaults, exports and compares the result against the reference render. It also checks the presets, the view modes, manual crop and the mobile layout.
+`e2e/smoke.mjs` drives the real UI in Chromium:
+- It uploads PNG and TIFF files and waits for automatic depth analysis.
+- It verifies byte-identical exports against Node.
+- It exports every format and checks the files: PNG dimensions, MPO structure, GIF, and MP4/WebM.
+- It checks batch ZIP, share links, presets, view modes, the mobile layout, and the production service worker working offline.
