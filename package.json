@@ -1,0 +1,25 @@
+{
+  "name": "stereo-3d-photo-generator",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Convert ordinary 2D photographs into side-by-side stereoscopic 3D images using deterministic pixel displacement.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "node e2e/smoke.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "fast-png": "^6.3.0",
+    "utif": "^3.1.0"
+  }
+}

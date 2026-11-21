@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="Convert ordinary photographs into side-by-side stereoscopic 3D images with precise, configurable pixel displacement." />
+  <title>Stereo 3D Photo Generator</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='13' height='20' rx='2' fill='%23ff5d5d'/%3E%3Crect x='17' y='6' width='13' height='20' rx='2' fill='%2340d0ff'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true"><i></i><i></i></span>
+        <div>
+          <h1>Stereo 3D Photo Generator</h1>
+          <p class="sub">Side-by-side stereoscopic images from any photograph</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-reset" class="btn ghost" title="Restore the default 1080×1920 · 14 px · 0.6 px configuration">Reset defaults</button>
+        <button id="btn-export-top" class="btn primary" disabled>Export</button>
+      </div>
+    </header>
+
+    <!-- LEFT PANEL: input, aspect, size, fitting -->
+    <aside class="panel panel-left" aria-label="Image and layout">
+      <section class="group">
+        <h2>Image</h2>
+        <label id="dropzone" class="dropzone" tabindex="0">
+          <input id="file-input" type="file" hidden />
+          <span class="dz-icon" aria-hidden="true">⇪</span>
+          <span class="dz-title">Drop a photo or click to upload</span>
+          <span class="dz-hint">JPEG · PNG · WEBP · TIFF</span>
+        </label>
+        <button id="btn-sample" class="btn small ghost wide">Use sample image</button>
+        <dl id="image-info" class="info hidden"></dl>
+      </section>
+
+      <section class="group">
+        <h2>Aspect ratio</h2>
+        <div class="seg" data-setting="aspect" role="radiogroup" aria-label="Aspect ratio">
+          <button data-value="9:16">9:16</button>
+          <button data-value="1:1">1:1</button>
+          <button data-value="16:9">16:9</button>
+          <button data-value="4:3">4:3</button>
+          <button data-value="custom">Custom</button>
+        </div>
+        <div id="custom-aspect" class="row hidden">
+          <label class="field"><span>Ratio W</span><input id="aspect-w" type="number" min="0.1" step="0.1" /></label>
+          <label class="field"><span>Ratio H</span><input id="aspect-h" type="number" min="0.1" step="0.1" /></label>
+        </div>
+        <div class="seg small" data-setting="aspectTarget" role="radiogroup" aria-label="Aspect applies to">
+          <button data-value="output" title="Ratio of the whole side-by-side image">Whole output</button>
+          <button data-value="eye" title="Ratio of each eye view">Each eye</button>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>Output size</h2>
+        <label class="field"><span>Resolution</span>
+          <select id="resolution">
+            <option value="720p">720p</option>
+            <option value="1080p">1080p (Full HD)</option>
+            <option value="1440p">1440p (QHD)</option>
+            <option value="4k">4K (UHD)</option>
+            <option value="8k">8K</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <div id="custom-size" class="row hidden">
+          <label class="field"><span>Width px</span><input id="custom-w" type="number" min="2" max="16384" step="2" /></label>
+          <label class="field"><span>Height px</span><input id="custom-h" type="number" min="1" max="16384" step="1" /></label>
+        </div>
+        <div id="size-readout" class="readout"></div>
+      </section>
+
+      <section class="group">
+        <h2>Fitting &amp; crop</h2>
+        <div class="seg" data-setting="fit" role="radiogroup" aria-label="Image fitting">
+          <button data-value="fill" title="Fill the entire canvas (crops overflow)">Fill</button>
+          <button data-value="fit" title="Fit without cropping">Fit</button>
+          <button data-value="stretch" title="Stretch to the exact dimensions">Stretch</button>
+          <button data-value="manual" title="Choose the crop rectangle manually">Crop</button>
+        </div>
+        <p id="manual-hint" class="hint hidden">Drag the frame on the photo to move it, drag a corner to resize. Double-click to reset.</p>
+        <div id="framing-controls">
+          <label class="slider"><span>Image scale <output id="scale-out"></output></span>
+            <input id="scale" type="range" min="0.5" max="3" step="0.01" />
+          </label>
+          <label class="slider"><span>Crop position X <output id="posx-out"></output></span>
+            <input id="posx" type="range" min="0" max="1" step="0.005" />
+          </label>
+          <label class="slider"><span>Crop position Y <output id="posy-out"></output></span>
+            <input id="posy" type="range" min="0" max="1" step="0.005" />
+          </label>
+        </div>
+        <div id="bg-controls" class="hidden">
+          <label class="field"><span>Background (fit mode)</span>
+            <select id="bg-kind">
+              <option value="blur">Blurred photo</option>
+              <option value="color">Solid colour</option>
+              <option value="transparent">Transparent</option>
+            </select>
+          </label>
+          <label id="bg-color-field" class="field hidden"><span>Colour</span><input id="bg-color" type="color" /></label>
+        </div>
+      </section>
+    </aside>
+
+    <!-- CENTER: preview -->
+    <main class="stage-wrap" aria-label="Preview">
+      <div class="stage-toolbar">
+        <div class="seg small" id="view-mode" role="tablist" aria-label="Preview mode">
+          <button data-value="sbs" title="Final side-by-side output">Side-by-side</button>
+          <button data-value="compare" title="Left and right eye with synchronised zoom">Compare L/R</button>
+          <button data-value="wiggle" title="Alternate left/right to see the displacement">Wiggle</button>
+          <button data-value="diff" title="Absolute difference between the eyes ×4">Difference</button>
+          <button data-value="anaglyph" title="Red/cyan check view">Anaglyph</button>
+          <button data-value="crop" title="Original photograph with visible region">Original</button>
+        </div>
+        <div class="zoom">
+          <button id="zoom-out" class="btn icon" aria-label="Zoom out">−</button>
+          <button id="zoom-label" class="btn small ghost" title="Toggle fit / 100%">Fit</button>
+          <button id="zoom-in" class="btn icon" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+      <div id="stage" class="stage">
+        <canvas id="stage-canvas"></canvas>
+        <div id="empty" class="empty">
+          <div class="empty-art" aria-hidden="true"><i></i><i></i></div>
+          <p>Upload a photograph to create a side-by-side stereoscopic image.</p>
+          <div class="empty-actions"><button id="btn-upload-empty" class="btn primary">Upload photo</button><button id="btn-sample-empty" class="btn ghost">Try sample</button></div>
+          <p class="hint">Default: 1080 × 1920 · right eye shifted 14 px horizontally and 0.6 px vertically · PNG</p>
+        </div>
+        <div id="busy" class="busy hidden"><span class="spinner"></span><span id="busy-text">Processing…</span></div>
+        <div id="pixel-readout" class="pixel-readout hidden"></div>
+      </div>
+      <div class="thumbs">
+        <figure data-thumb="original"><canvas id="thumb-original"></canvas><figcaption>Original</figcaption></figure>
+        <figure data-thumb="left"><canvas id="thumb-left"></canvas><figcaption>Left eye</figcaption></figure>
+        <figure data-thumb="right"><canvas id="thumb-right"></canvas><figcaption>Right eye</figcaption></figure>
+        <figure data-thumb="sbs"><canvas id="thumb-sbs"></canvas><figcaption>Side-by-side</figcaption></figure>
+      </div>
+      <div id="status" class="status" aria-live="polite"></div>
+    </main>
+
+    <!-- RIGHT PANEL: stereo + export -->
+    <aside class="panel panel-right" aria-label="Stereo and export">
+      <section class="group">
+        <h2>Horizontal offset</h2>
+        <div class="slider-row">
+          <input id="h-offset" type="range" min="-100" max="100" step="0.1" aria-label="Horizontal offset in pixels" />
+          <label class="num"><input id="h-offset-num" type="number" step="0.1" min="-1000" max="1000" /><span>px</span></label>
+        </div>
+        <div class="chips" data-chips="h">
+          <button data-value="0">0</button><button data-value="5">5</button><button data-value="10">10</button>
+          <button data-value="14">14</button><button data-value="20">20</button><button data-value="30">30</button>
+        </div>
+        <p class="hint">Horizontal displacement is the difference between the left- and right-eye views (binocular disparity). Larger values increase the perceived stereoscopic depth separation; measured in output pixels.</p>
+      </section>
+
+      <section class="group">
+        <h2 class="with-toggle">Vertical offset
+          <label class="switch"><input id="v-enabled" type="checkbox" /><span></span><em>On</em></label>
+        </h2>
+        <div class="slider-row">
+          <input id="v-offset" type="range" min="-10" max="10" step="0.05" aria-label="Vertical offset in pixels" />
+          <label class="num"><input id="v-offset-num" type="number" step="0.05" min="-100" max="100" /><span>px</span></label>
+        </div>
+        <div class="chips" data-chips="v">
+          <button data-value="0">0</button><button data-value="0.3">0.3</button><button data-value="0.6">0.6</button>
+          <button data-value="1">1</button><button data-value="2">2</button>
+        </div>
+        <p id="v-warning" class="warn hidden">Large vertical disparity makes stereoscopic fusion uncomfortable. Keep it subtle (≤ 2 px).</p>
+        <p class="hint">Fractional values are rendered with sub-pixel interpolation.</p>
+      </section>
+
+      <section class="group">
+        <h2>Stereo configuration</h2>
+        <span class="label">Offset direction</span>
+        <div class="seg small" data-setting="direction" role="radiogroup" aria-label="Offset direction">
+          <button data-value="1">Shift right →</button>
+          <button data-value="-1">← Shift left</button>
+        </div>
+        <span class="label">Displaced eye</span>
+        <div class="seg small" data-setting="shiftedEye" role="radiogroup" aria-label="Displaced eye">
+          <button data-value="left">Left image</button>
+          <button data-value="right">Right image</button>
+        </div>
+        <span class="label">Viewing arrangement</span>
+        <div class="seg small" data-setting="arrangement" role="radiogroup" aria-label="Arrangement">
+          <button data-value="parallel" title="Left-eye image on the left">Parallel (L | R)</button>
+          <button data-value="cross" title="Swap halves for cross-eyed viewing">Cross (R | L)</button>
+        </div>
+        <span class="label">Edges</span>
+        <div class="seg small" data-setting="edgeMode" role="radiogroup" aria-label="Edge handling">
+          <button data-value="extend" title="Fill revealed edges with surrounding image, then edge pixels">Extend</button>
+          <button data-value="crop" title="Zoom both views equally so no edge is revealed">Crop</button>
+        </div>
+        <div id="offset-summary" class="readout"></div>
+      </section>
+
+      <section class="group">
+        <h2>Interpolation</h2>
+        <label class="field"><span>Resizing</span>
+          <select id="resize-interp">
+            <option value="lanczos">Lanczos (best)</option>
+            <option value="bicubic">Bicubic</option>
+            <option value="bilinear">Bilinear</option>
+            <option value="nearest">Nearest neighbour</option>
+          </select>
+        </label>
+        <label class="field"><span>Sub-pixel displacement</span>
+          <select id="shift-interp">
+            <option value="bicubic">Bicubic</option>
+            <option value="lanczos">Lanczos</option>
+            <option value="bilinear">Bilinear</option>
+            <option value="nearest">Nearest neighbour</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="group">
+        <h2>Export</h2>
+        <div class="seg small" data-setting="exportFormat" role="radiogroup" aria-label="Export format">
+          <button data-value="png">PNG</button>
+          <button data-value="jpeg">JPEG</button>
+          <button data-value="webp">WEBP</button>
+        </div>
+        <label id="quality-field" class="slider hidden"><span>Quality <output id="quality-out"></output></span>
+          <input id="quality" type="range" min="0.5" max="1" step="0.01" />
+        </label>
+        <div id="export-readout" class="readout"></div>
+        <button id="btn-export" class="btn primary wide" disabled>Export image</button>
+        <p class="hint">PNG is lossless. Export always renders at the full output resolution, identical to a full-resolution preview.</p>
+      </section>
+    </aside>
+  </div>
+  <div id="toast" class="toast hidden" role="alert"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
