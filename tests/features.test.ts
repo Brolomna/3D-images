@@ -381,3 +381,31 @@ describe('hidden 3D autostereogram', () => {
     expect(flat.renderStereogram(settings((x) => { x.format = 'stereogram'; x.output.resolution = '720p'; })).hasDepth).toBe(false);
   });
 });
+
+import { applyDepthContrast } from '../src/core/depth';
+
+describe('depth contrast and extreme depth', () => {
+  it('contrast pushes near and far apart while keeping 0, 0.5 and 1 fixed', () => {
+    const ramp: DepthMap = { width: 5, height: 1, data: Float32Array.from([0, 0.25, 0.5, 0.75, 1]) };
+    expect(applyDepthContrast(ramp, 0)).toBe(ramp);
+    const c = applyDepthContrast(ramp, 0.6).data;
+    expect(c[0]).toBeCloseTo(0, 5);
+    expect(c[2]).toBeCloseTo(0.5, 5);
+    expect(c[4]).toBeCloseTo(1, 5);
+    expect(c[1]).toBeLessThan(0.25);
+    expect(c[3]).toBeGreaterThan(0.75);
+  });
+
+  it('very strong depth (200 px) still renders full, opaque, same-size views', () => {
+    const p = new StereoPipeline();
+    p.setSource(photo(400, 700, 5));
+    p.setDepth({ width: 40, height: 70, data: Float32Array.from({ length: 2800 }, (_, i) => (i % 40) / 40) });
+    const r = p.render(settings((s) => { s.output.resolution = '720p'; s.depth.strength = 200; s.depth.contrast = 1; }));
+    expect(r.depthUsed).toBe(true);
+    expect([r.left.width, r.left.height]).toEqual([r.right.width, r.right.height]);
+    let opaque = true;
+    for (let i = 3; i < r.right.data.length; i += 4) if (r.right.data[i] !== 255) opaque = false;
+    expect(opaque).toBe(true);
+    expect(imagesEqual(r.left, r.right)).toBe(false);
+  }, 30000);
+});

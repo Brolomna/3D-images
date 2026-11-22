@@ -11,7 +11,7 @@
  * input + settings → identical bytes, independent of the cache state.
  */
 import { buildBackground } from './background';
-import { depthToImage, normalizeDepth, renderDepthFrame, smoothDepth, type DepthMap } from './depth';
+import { applyDepthContrast, depthToImage, normalizeDepth, renderDepthFrame, smoothDepth, type DepthMap } from './depth';
 import { composeLayout } from './formats';
 import { renderMotionFrame } from './motion';
 import { buildTexture, generateAutostereogram, patternWidth, shapeDepth } from './autostereogram';
@@ -185,11 +185,11 @@ export class StereoPipeline {
 
     let depth: ViewParams['depth'] = null;
     if (this.rawDepth && (depthUsed || settings.depth.enabled || motion)) {
-      const dKey = JSON.stringify({ key, mx: base.marginX, my: base.marginY, id: this.depthId, s: settings.depth.smoothing, inv: settings.depth.invert });
+      const dKey = JSON.stringify({ key, mx: base.marginX, my: base.marginY, id: this.depthId, s: settings.depth.smoothing, inv: settings.depth.invert, c: settings.depth.contrast });
       if (!this.depthFrame || this.depthKey !== dKey) {
         const norm = normalizeDepth(this.rawDepth!, settings.depth.invert);
         const radius = (Math.max(0, settings.depth.smoothing) / 100) * norm.width;
-        const smooth = smoothDepth(norm, radius);
+        const smooth = applyDepthContrast(smoothDepth(norm, radius), settings.depth.contrast ?? 0);
         this.depthFrame = renderDepthFrame(smooth, mapping, src.width, src.height, eyeW, eyeH, base.marginX, base.marginY);
         this.depthKey = dKey;
       }

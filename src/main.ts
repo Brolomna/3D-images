@@ -382,6 +382,20 @@ function syncUI() {
   $('depth-strength-out').textContent = `${fmt(d.strength, 1)} px`;
   $<HTMLInputElement>('depth-focus').value = String(d.focus);
   $('depth-focus-out').textContent = d.focus <= 0.02 ? 'far' : d.focus >= 0.98 ? 'near' : `${Math.round(d.focus * 100)}%`;
+  $<HTMLInputElement>('depth-contrast').value = String(d.contrast ?? 0);
+  $('depth-contrast-out').textContent = (d.contrast ?? 0) === 0 ? 'off' : `${Math.round((d.contrast ?? 0) * 100)}%`;
+  {
+    // Warn when the disparity exceeds what most viewers can fuse comfortably.
+    const eyeW = outputSize().eyeWidth;
+    const total = d.strength * Math.max(d.focus, 1 - d.focus) + Math.abs(s.horizontalOffset);
+    const pct = (100 * total) / eyeW;
+    const w = $('depth-warning');
+    const stereo = !['motion', 'stereogram'].includes(s.format);
+    w.classList.toggle('hidden', !(d.enabled && stereo && pct > 6));
+    w.textContent = pct > 12
+      ? `Extreme depth (up to ${Math.round(total)} px ≈ ${Math.round(pct)}% of the eye width): dramatic in Wiggle, Anaglyph and VR, but hard to fuse by free-viewing. Edges around the subject may stretch.`
+      : `Strong depth (up to ${Math.round(total)} px ≈ ${Math.round(pct)}% of the eye width): above the usual comfort range (~3–6%).`;
+  }
   $<HTMLInputElement>('depth-smooth').value = String(d.smoothing);
   $('depth-smooth-out').textContent = `${fmt(d.smoothing, 2)}%`;
   $<HTMLInputElement>('depth-invert').checked = d.invert;
@@ -432,6 +446,7 @@ function syncUI() {
   $('sg-repeats-out').textContent = `${sg.repeats}× · ${Math.round(outputSize().width / sg.repeats)} px`;
   $<HTMLInputElement>('sg-depth').value = String(sg.depth);
   $('sg-depth-out').textContent = `${Math.round(sg.depth * 100)}%`;
+  $('sg-depth-warning').classList.toggle('hidden', sg.depth <= 0.5);
   $<HTMLInputElement>('sg-cutoff').value = String(sg.cutoff);
   $('sg-cutoff-out').textContent = `${Math.round(sg.cutoff * 100)}%`;
   $<HTMLInputElement>('sg-guides').checked = sg.guides;
@@ -748,6 +763,7 @@ function bindAll() {
   onInput('depth-strength', (el) => { settings.depth.strength = num(el, 16); });
   onInput('depth-focus', (el) => { settings.depth.focus = num(el, 0.5); });
   onInput('depth-smooth', (el) => { settings.depth.smoothing = num(el, 0.6); });
+  onInput('depth-contrast', (el) => { settings.depth.contrast = num(el, 0); });
   onInput('depth-invert', (el) => { settings.depth.invert = el.checked; }, 'change');
 
   onInput('h-offset', (el) => { settings.horizontalOffset = num(el, 0); });

@@ -26,6 +26,8 @@ export interface DepthSettings {
   smoothing: number;
   /** Swap near and far. */
   invert: boolean;
+  /** Depth contrast / "pop" (0 = linear … 1 = very strong subject separation). */
+  contrast: number;
 }
 
 export interface StereoSettings {
@@ -89,7 +91,7 @@ export const DEFAULT_SETTINGS: StereoSettings = {
   edgeMode: 'extend',
   edgeMask: false,
   arrangement: 'parallel',
-  depth: { enabled: true, strength: 16, focus: 0.5, smoothing: 0.6, invert: false },
+  depth: { enabled: true, strength: 16, focus: 0.5, smoothing: 0.6, invert: false, contrast: 0 },
   format: 'sbs',
   anaglyphMethod: 'dubois',
   wiggleFile: 'gif',

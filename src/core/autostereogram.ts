@@ -26,7 +26,7 @@ export interface StereogramSettings {
   palette: StereogramPalette;
   /** How many times the pattern repeats across the width (sets the pattern width). */
   repeats: number;
-  /** Depth of field μ (0.1–0.5): fraction of the viewing distance the shape spans. */
+  /** Depth of field μ (0.1–0.75): fraction of the viewing distance the shape spans (>0.5 = extreme). */
   depth: number;
   shape: StereogramShape;
   /** Depths below this become a flat background (0..0.9). */
@@ -235,7 +235,7 @@ export function generateAutostereogram(
   const P = texture.width;
   const K = OVERSAMPLE;
   const Wk = W * K;
-  const mu = Math.min(0.5, Math.max(0.05, s.depth));
+  const mu = Math.min(0.75, Math.max(0.05, s.depth));
   const E = 2 * P * K;
   const sep = (z: number) => Math.round(((1 - mu * z) * E) / (2 - mu * z));
   const out = createImage(W, H);

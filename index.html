@@ -218,8 +218,12 @@
         <div id="depth-status" class="depth-status"></div>
         <div id="depth-controls" class="stack">
           <label class="slider"><span>Depth strength <output id="depth-strength-out"></output></span>
-            <input id="depth-strength" type="range" min="0" max="60" step="0.5" />
+            <input id="depth-strength" type="range" min="0" max="200" step="1" />
           </label>
+          <label class="slider"><span>Depth contrast (pop) <output id="depth-contrast-out"></output></span>
+            <input id="depth-contrast" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <p id="depth-warning" class="warn hidden"></p>
           <label class="slider"><span>Focus plane <output id="depth-focus-out"></output></span>
             <input id="depth-focus" type="range" min="0" max="1" step="0.01" />
           </label>
@@ -328,7 +332,7 @@
             <button data-value="zoom" title="Push in and out">Zoom</button>
           </div>
           <label class="slider"><span>Movement amount <output id="motion-amount-out"></output></span>
-            <input id="motion-amount" type="range" min="4" max="60" step="1" />
+            <input id="motion-amount" type="range" min="4" max="150" step="1" />
           </label>
           <label class="slider"><span>Loop length <output id="motion-duration-out"></output></span>
             <input id="motion-duration" type="range" min="1500" max="8000" step="250" />
@@ -362,8 +366,9 @@
             <input id="sg-repeats" type="range" min="4" max="12" step="1" />
           </label>
           <label class="slider"><span>Depth <output id="sg-depth-out"></output></span>
-            <input id="sg-depth" type="range" min="0.1" max="0.5" step="0.01" />
+            <input id="sg-depth" type="range" min="0.1" max="0.75" step="0.01" />
           </label>
+          <p id="sg-depth-warning" class="warn hidden">Extreme depth: the shape pops out a lot but takes longer to lock onto. Try a few seconds of relaxed staring.</p>
           <span class="label">Hidden shape</span>
           <div class="seg small" data-setting="sgShape" role="radiogroup" aria-label="Hidden shape">
             <button data-value="smooth" title="Full 3D relief from the depth map">Smooth</button>

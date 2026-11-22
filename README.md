@@ -50,7 +50,8 @@ npm run test:e2e   # browser end-to-end test (Playwright + Chromium; downloads t
   - The ~27 MB model downloads from Hugging Face on first use and is cached by the browser.
   - The ONNX Runtime binary is served with the app.
 - **Controls:**
-  - **Depth strength:** the extra disparity between the nearest and farthest point, in output pixels.
+  - **Depth strength:** the extra disparity between the nearest and farthest point, in output pixels (0–200). Above about 6 % of the eye width the app warns that free-viewing gets hard. Extreme values look most dramatic in Wiggle, Anaglyph, VR and 3D photo motion.
+  - **Depth contrast (pop):** an S-curve that pushes near and far apart, so the subject separates strongly from the background without having to raise the total disparity.
   - **Focus plane:** the depth that stays at the base offset.
   - **Smoothing:** reduces warping at depth edges.
   - **Invert depth:** swaps near and far.

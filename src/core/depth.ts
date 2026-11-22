@@ -46,6 +46,20 @@ export function normalizeDepth(raw: DepthMap, invert = false): DepthMap {
   return { width: raw.width, height: raw.height, data: out };
 }
 
+/**
+ * Depth contrast ("pop"): an S-curve around the middle depth that pushes
+ * near and far apart, so the subject separates more strongly from the
+ * background. amount 0 = unchanged (linear), 1 = very strong.
+ */
+export function applyDepthContrast(map: DepthMap, amount: number): DepthMap {
+  const k = Math.max(0, Math.min(1, amount)) * 8;
+  if (k < 0.01) return map;
+  const norm = Math.tanh(k * 0.5);
+  const out = new Float32Array(map.data.length);
+  for (let i = 0; i < out.length; i++) out[i] = 0.5 + (0.5 * Math.tanh(k * (map.data[i] - 0.5))) / norm;
+  return { width: map.width, height: map.height, data: out };
+}
+
 /** Separable 3-pass box blur of a float map (≈ Gaussian), edge-clamped. */
 export function smoothDepth(map: DepthMap, radius: number): DepthMap {
   const r = Math.max(0, Math.round(radius));
