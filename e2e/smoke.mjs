@@ -287,6 +287,26 @@ const thumbsDrawn = await page.evaluate(() => [...document.querySelectorAll('.st
 check(thumbsDrawn, 'all 8 style cards show a live thumbnail');
 await chooseStyle('sbs');
 
+// ── 3b. 3D Scene: new depth background + subject pop ──
+{
+  const before = decode((await exportFile('scene_before.png')).bytes);
+  await page.click('#scene-enabled + span');
+  await page.click('#scene-grid .scene-card[data-value="space"]');
+  await page.waitForFunction(() => document.getElementById('scene-status').textContent.includes('Scene ready'), null, { timeout: 120000 });
+  await waitRender();
+  const after = decode((await exportFile('scene_after.png')).bytes);
+  let diff = 0;
+  for (let i = 0; i < before.data.length; i += 97) if (before.data[i] !== after.data[i]) diff++;
+  check(after.width === before.width && diff > 1000, `3D Scene changes the export (${diff} sampled pixels differ)`);
+  await page.click('#view-mode button[data-value="crop"]');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(out, 'scene_space.png') });
+  await page.click('#view-mode button[data-value="sbs"]');
+  await page.click('#scene-enabled + span');
+  await page.waitForFunction(() => document.getElementById('scene-status').textContent === '', null, { timeout: 60000 });
+  await waitRender();
+}
+
 // ── 4. Batch → ZIP ──
 {
   const [dl] = await Promise.all([

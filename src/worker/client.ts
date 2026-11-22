@@ -1,5 +1,6 @@
 /** Main-thread client for the processing worker, with render coalescing. */
 import type { DepthMap } from '../core/depth';
+import type { SceneSettings } from '../core/scene';
 import type { StereoSettings } from '../core/settings';
 import type { RGBAImage } from '../core/types';
 import type { RawDepth, RenderInfo, WorkerRequest, WorkerResponse } from './protocol';
@@ -75,6 +76,30 @@ export class StereoWorkerClient {
       { type: 'texture', id: this.nextId++, texture: t && copy ? { width: t.width, height: t.height, buffer: copy.buffer } : null },
       copy ? [copy.buffer] : [],
     );
+  }
+
+  /** Apply (or remove) the 3D Scene; resolves with a preview of the composite. */
+  async setScene(scene: SceneSettings): Promise<{ applied: boolean; preview: RGBAImage | null; ms: number }> {
+    const r = await this.call<Extract<WorkerResponse, { type: 'scene-ready' }>>({ type: 'scene', id: this.nextId++, scene: JSON.parse(JSON.stringify(scene)) });
+    const p = r.preview;
+    return { applied: r.applied, ms: r.ms, preview: p ? { width: p.width, height: p.height, data: new Uint8ClampedArray(p.buffer) } : null };
+  }
+
+  /** Custom background (image + estimated depth) for the 'custom' scene. */
+  async setSceneBackground(bg: { image: RGBAImage; depth: DepthMap } | null): Promise<{ applied: boolean; preview: RGBAImage | null }> {
+    let msg: WorkerRequest;
+    const transfer: Transferable[] = [];
+    if (bg) {
+      const img = bg.image.data.slice();
+      const d = rawDepth(bg.depth)!;
+      transfer.push(img.buffer, d.buffer);
+      msg = { type: 'scene-bg', id: this.nextId++, bg: { width: bg.image.width, height: bg.image.height, buffer: img.buffer, depth: d } };
+    } else {
+      msg = { type: 'scene-bg', id: this.nextId++, bg: null };
+    }
+    const r = await this.call<Extract<WorkerResponse, { type: 'scene-ready' }>>(msg, transfer);
+    const p = r.preview;
+    return { applied: r.applied, preview: p ? { width: p.width, height: p.height, data: new Uint8ClampedArray(p.buffer) } : null };
   }
 
   async setDepth(d: DepthMap | null): Promise<void> {

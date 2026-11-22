@@ -87,6 +87,17 @@ The **Choose 3D style** panel shows live thumbnails of *your* photo in every sty
 
 Exports always render at full resolution. The *Output* preview shows exactly what will be exported.
 
+### 3D Scene (new background + subject pop)
+Turn any photo into a staged 3D scene. It applies before every 3D style.
+
+1. **Cut-out:** the subject is found from the depth map: whatever stands out in front of its row-by-row background, so floors aren't mistaken for the subject. Stray near objects are dropped. An edge-aware **guided filter** snaps the soft edge to the photo.
+2. **Background built for depth:**
+   - Generated in the browser with exact per-pixel depth: **Auto** (a layered landscape in the photo's own colours), **Mountains**, **Tunnel**, **Space**, **3D room** or **Bokeh lights**.
+   - **Keep original** keeps the photo's own background.
+   - **Your own backgrounds:** upload images. Their depth is estimated and they're saved in the browser as reusable presets (IndexedDB), with delete.
+3. **Subject pop:** the subject sits in front of the background (adjustable separation). It gets a rounded body, its own depth relief and fine surface detail (bas-relief from the photo), so it stands out strongly.
+4. **Options:** background depth, subject pop, separation, edge softness, subject threshold, a soft shadow and "New variation".
+
 ### Stereograms (Magic Eye style)
 Autostereograms like the classic *Magic Eye* prints repeat a texture strip across the image.
 
@@ -150,6 +161,7 @@ depth model ─► normalise/smooth ─► depth frame aligned with the base (ca
 | — | Depth estimation | `depth/depth.worker.ts`, `depth/client.ts` |
 | 7 | Composition engine (all formats) | `core/compose.ts`, `core/formats.ts` |
 | 8 | Preview renderer | `ui/preview.ts` |
+| — | 3D Scene | `core/scene.ts` (backgrounds, guided-filter matting, compositing), `io/backgrounds.ts` (saved backgrounds) |
 | 9 | Export engine | `worker/stereo.worker.ts`, `worker/video.ts`, `core/encode.ts`, `core/gif.ts`, `core/mpo.ts` |
 | — | 3D photo motion | `core/motion.ts` (2-pass depth warp: horizontal, then vertical via transposition) |
 | — | Stereogram | `core/sketch.ts` (sketch stage), `core/autostereogram.ts` (textures, depth shaping, generator) |

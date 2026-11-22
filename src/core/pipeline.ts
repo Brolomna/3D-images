@@ -109,9 +109,15 @@ export class StereoPipeline {
     return this.source;
   }
 
-  /** Raw relative-inverse-depth prediction for the current source (or null). */
-  setDepth(depth: DepthMap | null): void {
+  private depthNormalized = false;
+
+  /**
+   * Depth for the current source (or null): the model's raw relative inverse
+   * depth, or an already-normalised 0..1 map (e.g. from the 3D Scene).
+   */
+  setDepth(depth: DepthMap | null, normalized = false): void {
     this.rawDepth = depth;
+    this.depthNormalized = normalized;
     this.depthId++;
     this.depthFrame = null;
     this.depthKey = '';
@@ -188,7 +194,9 @@ export class StereoPipeline {
     if (this.rawDepth && (depthUsed || settings.depth.enabled || motion)) {
       const dKey = JSON.stringify({ key, mx: base.marginX, my: base.marginY, id: this.depthId, s: settings.depth.smoothing, inv: settings.depth.invert, c: settings.depth.contrast });
       if (!this.depthFrame || this.depthKey !== dKey) {
-        const norm = normalizeDepth(this.rawDepth!, settings.depth.invert);
+        const norm = this.depthNormalized
+          ? { ...this.rawDepth!, data: settings.depth.invert ? this.rawDepth!.data.map((v) => 1 - v) : this.rawDepth!.data }
+          : normalizeDepth(this.rawDepth!, settings.depth.invert);
         const radius = (Math.max(0, settings.depth.smoothing) / 100) * norm.width;
         const smooth = applyDepthContrast(smoothDepth(norm, radius), settings.depth.contrast ?? 0);
         this.depthFrame = renderDepthFrame(smooth, mapping, src.width, src.height, eyeW, eyeH, base.marginX, base.marginY);

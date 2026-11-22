@@ -468,3 +468,88 @@ describe('stereogram sketch stage', () => {
     expect([r.sketch!.width, r.sketch!.height]).toEqual([r.image.width, r.image.height]);
   }, 30000);
 });
+
+import { buildScene, DEFAULT_SCENE, generateBackground, guidedFilter, keepMainRegions } from '../src/core/scene';
+
+describe('3D Scene', () => {
+  // A round subject (bright) on a floor that gets nearer towards the bottom.
+  function scene(W = 300, H = 200) {
+    const photo = createImage(W, H);
+    const depth: DepthMap = { width: W, height: H, data: new Float32Array(W * H) };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const inBody = Math.hypot(x - 150, y - 95) < 55;
+      depth.data[y * W + x] = 0.1 + 0.4 * (y / H) + (inBody ? 0.45 : 0);
+      photo.data.set(inBody ? [220, 150, 60, 255] : [60, 110, 70, 255], (y * W + x) * 4);
+    }
+    return { photo, depth, W, H };
+  }
+
+  it('every background preset has full-size colour and 0..1 depth', () => {
+    const pal: [number, number, number][] = [[10, 10, 10], [60, 60, 60], [120, 120, 120], [180, 180, 180], [240, 240, 240]];
+    for (const kind of ['auto', 'mountains', 'tunnel', 'space', 'room', 'bokeh'] as const) {
+      const l = generateBackground(kind, 120, 80, pal, 3);
+      expect([l.image.width, l.image.height, l.depth.length]).toEqual([120, 80, 9600]);
+      let min = 1, max = 0;
+      for (const v of l.depth) { min = Math.min(min, v); max = Math.max(max, v); }
+      expect(min).toBeGreaterThanOrEqual(0);
+      expect(max).toBeLessThanOrEqual(1);
+      expect(max - min).toBeGreaterThan(0.2); // real depth variation
+      const again = generateBackground(kind, 120, 80, pal, 3);
+      expect(imagesEqual(l.image, again.image)).toBe(true);
+    }
+  });
+
+  it('guided filter keeps a constant mask and regions filter drops stray blobs', () => {
+    const I = Float32Array.from({ length: 400 }, (_, i) => (i % 20) / 20);
+    const q = guidedFilter(I, new Float32Array(400).fill(1), 20, 20, 2, 1e-3);
+    for (const v of q) expect(v).toBeCloseTo(1, 4);
+    const m = new Uint8Array(100);
+    for (let i = 0; i < 40; i++) m[i] = 1; // big region (rows 0..3)
+    m[99] = 1; // stray pixel
+    keepMainRegions(m, 10, 10, 0.35);
+    expect(m[99]).toBe(0);
+    expect(m[5]).toBe(1);
+  });
+
+  it('places the subject in front of a new background with depth, ignoring the floor', () => {
+    const { photo, depth, W } = scene();
+    const r = buildScene(photo, depth, { ...DEFAULT_SCENE, enabled: true, background: 'mountains' }, null);
+    expect([r.image.width, r.image.height]).toEqual([300, 200]);
+    const a = (x: number, y: number) => r.alpha.data[y * r.alpha.width + x];
+    expect(a(150, 95)).toBeGreaterThan(0.9); // subject kept
+    expect(a(150, 195)).toBeLessThan(0.1); // near floor replaced
+    expect(a(5, 5)).toBeLessThan(0.1);
+    // Subject pixels are the photo's; background pixels are new.
+    expect(px(r.image, 150, 95)).toEqual([220, 150, 60, 255]);
+    expect(px(r.image, 5, 195)).not.toEqual([60, 110, 70, 255]);
+    // Subject is nearer than any background pixel.
+    const dz = (x: number, y: number) => r.depth.data[y * r.depth.width + x];
+    let bgMax = 0;
+    for (let y = 0; y < 200; y += 4) for (let x = 0; x < W; x += 4) if (a(x, y) < 0.05) bgMax = Math.max(bgMax, dz(x, y));
+    expect(dz(150, 95)).toBeGreaterThan(bgMax);
+  });
+
+  it('uses a custom background with its own depth, deterministically', () => {
+    const { photo: subj, depth } = scene();
+    const bg = photo(400, 300, 9);
+    const bgDepth: DepthMap = { width: 40, height: 30, data: Float32Array.from({ length: 1200 }, (_, i) => Math.floor(i / 40) / 30) };
+    const s = { ...DEFAULT_SCENE, enabled: true, background: 'custom' as const };
+    const a = buildScene(subj, depth, s, { image: bg, depth: bgDepth });
+    const b = buildScene(subj, depth, s, { image: bg, depth: bgDepth });
+    expect(imagesEqual(a.image, b.image)).toBe(true);
+    // Background depth follows the custom map (top far, bottom near).
+    const dz = (x: number, y: number) => a.depth.data[y * a.depth.width + x];
+    expect(dz(10, 190)).toBeGreaterThan(dz(10, 10));
+  });
+
+  it('pipeline accepts the scene depth as pre-normalised', () => {
+    const { photo, depth } = scene();
+    const r = buildScene(photo, depth, { ...DEFAULT_SCENE, enabled: true }, null);
+    const p = new StereoPipeline();
+    p.setSource(r.image);
+    p.setDepth(r.depth, true);
+    const out = p.render(settings((x) => { x.output.aspect = '4:3'; x.output.resolution = '720p'; }));
+    expect(out.depthUsed).toBe(true);
+    expect(imagesEqual(out.left, out.right)).toBe(false);
+  }, 30000);
+});

@@ -52,7 +52,7 @@ export const SKETCH_COLORS = {
 } as const;
 
 /** Two-pass 3-4 chamfer distance (≈ Euclidean px / 3) from pixels outside the mask. */
-function insideDistance(mask: Uint8Array, w: number, h: number): Float32Array {
+export function insideDistance(mask: Uint8Array, w: number, h: number): Float32Array {
   const INF = 1e9;
   const d = new Float32Array(w * h);
   for (let i = 0; i < d.length; i++) d[i] = mask[i] ? INF : 0;
@@ -121,7 +121,7 @@ function normalise(v: Float32Array): Float32Array {
 }
 
 /** Remove connected regions (8-neighbour) smaller than `minArea` pixels. */
-function removeSmall(bin: Uint8Array, w: number, h: number, minArea: number): void {
+export function removeSmall(bin: Uint8Array, w: number, h: number, minArea: number): void {
   const seen = new Uint8Array(bin.length);
   const queue = new Int32Array(bin.length);
   const region: number[] = [];
@@ -147,27 +147,18 @@ function removeSmall(bin: Uint8Array, w: number, h: number, minArea: number): vo
 }
 
 /**
- * Build the sketch from the reference view of the photo and its normalised
- * depth (both eye-frame sized). `threshold` shifts the automatic subject/background split;
- * `scale` = render scale (line widths are given in output pixels).
+ * Subject mask from a normalised depth map (1 = subject).
+ *
+ * Photos usually show a floor / table / blanket that gets nearer towards the
+ * bottom, so "near" alone is not "subject". The background is modelled per
+ * row (a low percentile of that row's depth, smoothed vertically) and the
+ * subject is whatever stands out in front of it. Close-ups with no
+ * background fall back to absolute depth. `threshold` shifts the automatic
+ * (Otsu) split.
  */
-export function buildSketch(
-  photo: RGBAImage,
-  depth: DepthMap,
-  threshold: number,
-  sk: SketchSettings,
-  scale: number,
-): Sketch {
+export function subjectMask(depth: DepthMap, threshold = 0): Uint8Array {
   const W = depth.width, H = depth.height;
-  if (photo.width !== W || photo.height !== H) throw new Error('Sketch inputs differ in size');
   const N = W * H;
-  const px = (v: number) => Math.max(1, v * scale);
-
-  // 1. Body shape. Photos usually show a floor / table / blanket that gets
-  //    nearer towards the bottom, so "near" alone is not "subject". Model the
-  //    background per row (a low percentile of that row's depth, smoothed
-  //    vertically) and call the subject whatever stands out in front of it.
-  //    Close-ups with no background fall back to absolute depth.
   const soft = smoothDepth(depth, Math.max(1, Math.round(W / 500)));
   const rowBg = new Float32Array(H);
   const row = new Float32Array(W);
@@ -194,6 +185,28 @@ export function buildSketch(
   const mask = new Uint8Array(N);
   for (let i = 0; i < N; i++) mask[i] = rounded.data[i] > 0.5 ? 1 : 0;
   removeSmall(mask, W, H, Math.round(N * 0.002));
+  return mask;
+}
+
+/**
+ * Build the sketch from the reference view of the photo and its normalised
+ * depth (both eye-frame sized). `threshold` shifts the automatic subject/background split;
+ * `scale` = render scale (line widths are given in output pixels).
+ */
+export function buildSketch(
+  photo: RGBAImage,
+  depth: DepthMap,
+  threshold: number,
+  sk: SketchSettings,
+  scale: number,
+): Sketch {
+  const W = depth.width, H = depth.height;
+  if (photo.width !== W || photo.height !== H) throw new Error('Sketch inputs differ in size');
+  const N = W * H;
+  const px = (v: number) => Math.max(1, v * scale);
+
+  // 1. Body shape (see subjectMask).
+  const mask = subjectMask(depth, threshold);
   const dist = insideDistance(mask, W, H);
   const thick = px(sk.thickness);
   const detail = Math.max(0, Math.min(1, sk.detail));
@@ -248,7 +261,10 @@ export function buildSketch(
   const R = Math.max(4, W * 0.07);
   const h = 0.32 * Math.max(0, Math.min(1, sk.lineHeight)) * (sk.lineMode === 'raised' ? 1 : -1);
   const z = new Float32Array(N);
-  const relief0 = t;
+  // Relief measured from the subject's own farthest point.
+  let relief0 = 1;
+  for (let i = 0; i < N; i++) if (mask[i] && depth.data[i] < relief0) relief0 = depth.data[i];
+  relief0 = Math.min(0.95, relief0);
   for (let i = 0; i < N; i++) {
     if (!mask[i]) continue;
     const q = Math.min(1, dist[i] / R);

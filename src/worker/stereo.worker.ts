@@ -10,6 +10,7 @@ import { buildPalette, encodeGif, encodeGifStream } from '../core/gif';
 import { motionTiming } from '../core/motion';
 import { resolveOutputSize } from '../core/layout';
 import { assembleMPO } from '../core/mpo';
+import { buildScene, downscale, type SceneSettings } from '../core/scene';
 import { StereoPipeline } from '../core/pipeline';
 import type { StereoSettings } from '../core/settings';
 import type { RGBAImage } from '../core/types';
@@ -22,6 +23,39 @@ let exportPipeline: StereoPipeline | null = null;
 let source: RGBAImage | null = null;
 let depth: DepthMap | null = null;
 let texture: RGBAImage | null = null;
+let scene: SceneSettings | null = null;
+let sceneBg: { image: RGBAImage; depth: DepthMap } | null = null;
+let sceneApplied = false;
+
+/**
+ * Point the pipelines at the right source: the original photo + model depth,
+ * or the 3D Scene composite + its normalised depth. Returns a small preview
+ * of the composite when a scene is applied.
+ */
+function applyScene(): { applied: boolean; preview: RGBAImage | null } {
+  if (!source) return { applied: false, preview: null };
+  if (scene?.enabled && depth) {
+    const r = buildScene(source, depth, scene, sceneBg);
+    preview.setSource(r.image);
+    preview.setDepth(r.depth, true);
+    preview.setCustomTexture(texture);
+    exportPipeline = null;
+    exportSource = r;
+    sceneApplied = true;
+    return { applied: true, preview: downscale(r.image, 1600) };
+  }
+  if (sceneApplied) {
+    preview.setSource(source);
+    preview.setCustomTexture(texture);
+    exportPipeline = null;
+    sceneApplied = false;
+  }
+  exportSource = null;
+  preview.setDepth(depth);
+  exportPipeline?.setDepth(depth);
+  return { applied: false, preview: null };
+}
+let exportSource: { image: RGBAImage; depth: DepthMap } | null = null;
 
 function post(msg: WorkerResponse, transfer: Transferable[] = []) {
   ctx.postMessage(msg, transfer);
@@ -36,13 +70,28 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       source = { width: msg.width, height: msg.height, data: new Uint8ClampedArray(msg.buffer) };
       depth = null;
       preview.setSource(source);
+      preview.setCustomTexture(texture);
+      sceneApplied = false;
+      exportSource = null;
       exportPipeline = null;
       post({ type: 'ok', id: msg.id });
     } else if (msg.type === 'depth') {
       depth = toDepth(msg.depth);
-      preview.setDepth(depth);
-      exportPipeline?.setDepth(depth);
+      applyScene();
       post({ type: 'ok', id: msg.id });
+    } else if (msg.type === 'scene' || msg.type === 'scene-bg') {
+      if (msg.type === 'scene') scene = msg.scene;
+      else sceneBg = msg.bg ? {
+        image: { width: msg.bg.width, height: msg.bg.height, data: new Uint8ClampedArray(msg.bg.buffer) },
+        depth: toDepth(msg.bg.depth)!,
+      } : null;
+      const t0 = performance.now();
+      const r = msg.type === 'scene' || scene?.enabled ? applyScene() : { applied: sceneApplied, preview: null };
+      const buf = r.preview ? (r.preview.data.slice().buffer as ArrayBuffer) : null;
+      post({
+        type: 'scene-ready', id: msg.id, applied: r.applied, ms: performance.now() - t0,
+        preview: r.preview && buf ? { width: r.preview.width, height: r.preview.height, buffer: buf } : null,
+      }, buf ? [buf] : []);
     } else if (msg.type === 'texture') {
       texture = msg.texture ? { width: msg.texture.width, height: msg.texture.height, data: new Uint8ClampedArray(msg.texture.buffer) } : null;
       preview.setCustomTexture(texture);
@@ -86,22 +135,36 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       }, transfer);
     } else if (msg.type === 'export') {
       let pipeline: StereoPipeline;
+      const progress = (stage: string) => post({ type: 'progress', id: msg.id, stage });
       if (msg.item) {
         pipeline = new StereoPipeline();
-        pipeline.setSource({ width: msg.item.width, height: msg.item.height, data: new Uint8ClampedArray(msg.item.buffer) });
-        pipeline.setDepth(toDepth(msg.item.depth));
+        const itemSrc = { width: msg.item.width, height: msg.item.height, data: new Uint8ClampedArray(msg.item.buffer) };
+        const itemDepth = toDepth(msg.item.depth);
+        if (msg.settings.scene?.enabled && itemDepth) {
+          progress('Building 3D scene…');
+          const r = buildScene(itemSrc, itemDepth, msg.settings.scene, sceneBg);
+          pipeline.setSource(r.image);
+          pipeline.setDepth(r.depth, true);
+        } else {
+          pipeline.setSource(itemSrc);
+          pipeline.setDepth(itemDepth);
+        }
         pipeline.setCustomTexture(texture);
       } else {
         if (!source) throw new Error('No image loaded');
         if (!exportPipeline) {
           exportPipeline = new StereoPipeline();
-          exportPipeline.setSource(source);
-          exportPipeline.setDepth(depth);
+          if (exportSource) {
+            exportPipeline.setSource(exportSource.image);
+            exportPipeline.setDepth(exportSource.depth, true);
+          } else {
+            exportPipeline.setSource(source);
+            exportPipeline.setDepth(depth);
+          }
           exportPipeline.setCustomTexture(texture);
         }
         pipeline = exportPipeline;
       }
-      const progress = (stage: string) => post({ type: 'progress', id: msg.id, stage });
       const out = await exportFormat(pipeline, msg.settings, progress);
       post({ type: 'exported', id: msg.id, ...out });
     }

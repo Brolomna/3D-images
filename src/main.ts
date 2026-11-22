@@ -13,6 +13,8 @@ import {
 } from './core/settings';
 import { motionTiming, type MotionPath } from './core/motion';
 import type { StereogramPalette, StereogramPattern, StereogramShape } from './core/autostereogram';
+import { downscale, extractPalette, generateBackground, type SceneBackground } from './core/scene';
+import { deleteBackground, getBackground, listBackgrounds, saveBackground, type SavedBackground } from './io/backgrounds';
 import type { Interpolation, RGBAImage } from './core/types';
 import { DepthClient, type DepthProgress } from './depth/client';
 import { ACCEPT_ATTR, createSampleImage, importFile, type ImportedImage } from './io/import';
@@ -75,7 +77,7 @@ let customTextureLoaded = false;
 
 /** Depth is needed for depth-based stereo and always for the motion style. */
 function depthWanted(s = settings): boolean {
-  return s.depth.enabled || s.format === 'motion' || s.format === 'stereogram';
+  return s.depth.enabled || s.format === 'motion' || s.format === 'stereogram' || s.scene.enabled;
 }
 let imageToken = 0;
 
@@ -144,6 +146,7 @@ function ensureDepth(): Promise<DepthMap | null> {
     depthState = { kind: 'ready', map, ms: performance.now() - t0 };
     await worker.setDepth(map);
     syncDepthStatus();
+    void syncScene();
     scheduleRender();
     return map;
   }, (e: Error) => {
@@ -192,6 +195,137 @@ function syncDepthStatus() {
     default:
       el.textContent = '';
   }
+}
+
+// ───────────────────────── 3D Scene ─────────────────────────
+
+let sceneKey = '';
+let sceneTimer = 0;
+let loadedBgId: string | null = null;
+let savedBgs: SavedBackground[] = [];
+let sceneShown = false;
+
+function scheduleSceneSync() {
+  clearTimeout(sceneTimer);
+  sceneTimer = window.setTimeout(() => void syncScene(), 250);
+}
+
+/** Send the scene settings to the worker when they (or the photo / depth) change. */
+async function syncScene() {
+  if (!current) return;
+  const sc = settings.scene;
+  const key = JSON.stringify({ sc: sc.enabled ? sc : false, t: imageToken, d: depthState.kind === 'ready' });
+  if (key === sceneKey) return;
+  sceneKey = key;
+  const status = $('scene-status');
+  if (sc.enabled && depthState.kind !== 'ready') {
+    status.innerHTML = '<span class="spinner"></span><span>Waiting for the depth map…</span>';
+    return;
+  }
+  try {
+    if (sc.enabled && sc.background === 'custom' && sc.customId && sc.customId !== loadedBgId) {
+      const bg = savedBgs.find((b) => b.id === sc.customId) ?? (await getBackground(sc.customId));
+      if (bg) {
+        await worker.setSceneBackground({ image: bg.image, depth: bg.depth });
+        loadedBgId = bg.id;
+      }
+    }
+    if (sc.enabled) setBusy(true, 'Building 3D scene…');
+    const r = await worker.setScene(sc);
+    if (r.applied && r.preview) {
+      const bmp = await createImageBitmap(new ImageData(r.preview.data as Uint8ClampedArray<ArrayBuffer>, r.preview.width, r.preview.height));
+      preview.setOriginal(bmp);
+      sceneShown = true;
+      status.className = 'depth-status ok';
+      status.textContent = `✓ Scene ready (${(r.ms / 1000).toFixed(1)} s)`;
+    } else {
+      if (sceneShown && current) preview.setOriginal(current.bitmap);
+      sceneShown = false;
+      status.className = 'depth-status';
+      status.textContent = '';
+    }
+  } catch (e) {
+    toast(`3D Scene failed: ${(e as Error).message}`, true);
+  } finally {
+    setBusy(false);
+    scheduleRender();
+  }
+}
+
+function drawSceneSwatches() {
+  const palette = current ? extractPalette(downscale(current.image, 200), () => 1) : null;
+  document.querySelectorAll<HTMLButtonElement>('#scene-grid .scene-card').forEach((card) => {
+    const kind = card.dataset.value as SceneBackground;
+    const c = card.querySelector('canvas')!;
+    const g = c.getContext('2d')!;
+    if (kind === 'original') {
+      g.fillStyle = '#0b0c0f';
+      g.fillRect(0, 0, c.width, c.height);
+      if (current) {
+        const k = Math.max(c.width / current.bitmap.width, c.height / current.bitmap.height);
+        g.drawImage(current.bitmap, (c.width - current.bitmap.width * k) / 2, (c.height - current.bitmap.height * k) / 2, current.bitmap.width * k, current.bitmap.height * k);
+      }
+      return;
+    }
+    const pal = palette ?? [[40, 50, 40], [80, 110, 70], [140, 160, 110], [200, 190, 150], [240, 235, 210]];
+    const layer = generateBackground(kind as Exclude<SceneBackground, 'custom' | 'original'>, c.width, c.height, pal as [number, number, number][], 1);
+    g.putImageData(new ImageData(layer.image.data as Uint8ClampedArray<ArrayBuffer>, c.width, c.height), 0, 0);
+  });
+}
+
+function renderCustomBackgrounds() {
+  const box = $('scene-custom');
+  box.innerHTML = '';
+  for (const bg of savedBgs) {
+    const b = document.createElement('button');
+    b.className = 'scene-card';
+    b.dataset.id = bg.id;
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(settings.scene.background === 'custom' && settings.scene.customId === bg.id));
+    b.innerHTML = `<img alt="" src="${bg.thumb}"><span title="${escapeHtml(bg.name)}">${escapeHtml(bg.name)}</span>`;
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.title = 'Delete this background';
+    del.textContent = '×';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await deleteBackground(bg.id);
+      savedBgs = savedBgs.filter((x) => x.id !== bg.id);
+      if (settings.scene.customId === bg.id) { settings.scene.customId = null; settings.scene.background = 'auto'; }
+      renderCustomBackgrounds();
+      commit();
+    });
+    b.appendChild(del);
+    b.addEventListener('click', () => {
+      settings.scene.background = 'custom';
+      settings.scene.customId = bg.id;
+      commit();
+    });
+    box.appendChild(b);
+  }
+}
+
+async function addCustomBackgrounds(files: File[]) {
+  for (const f of files) {
+    try {
+      setBusy(true, `Adding background "${f.name}"…`);
+      const imported = await importFile(f);
+      imported.bitmap.close();
+      const img = downscale(imported.image, 1600);
+      setBusy(true, `Analysing depth of "${f.name}"…`);
+      const depth = await depthClient.estimate(img);
+      const saved = await saveBackground(imported.name, img, depth);
+      savedBgs.push(saved);
+      settings.scene.background = 'custom';
+      settings.scene.customId = saved.id;
+    } catch (e) {
+      toast(`Could not add ${f.name}: ${(e as Error).message}`, true);
+    }
+  }
+  setBusy(false);
+  settings.scene.enabled = true;
+  renderCustomBackgrounds();
+  commit();
 }
 
 // ───────────────────────── rendering ─────────────────────────
@@ -249,6 +383,7 @@ function commit() {
   saveSettings();
   updateHash();
   if (depthWanted() && current) void ensureDepth();
+  scheduleSceneSync();
   scheduleRender();
 }
 
@@ -381,6 +516,22 @@ function syncUI() {
   $<HTMLSelectElement>('bg-kind').value = s.background.kind;
   $('bg-color-field').classList.toggle('hidden', s.background.kind !== 'color');
   if (s.background.kind === 'color') $<HTMLInputElement>('bg-color').value = s.background.color.slice(0, 7);
+
+  // 3D Scene
+  const sc = s.scene;
+  $<HTMLInputElement>('scene-enabled').checked = sc.enabled;
+  $('scene-enabled').parentElement!.querySelector('em')!.textContent = sc.enabled ? 'On' : 'Off';
+  $('scene-controls').classList.toggle('hidden', !sc.enabled);
+  document.querySelectorAll<HTMLElement>('#scene-grid .scene-card').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.value === sc.background)));
+  document.querySelectorAll<HTMLElement>('#scene-custom .scene-card').forEach((c) => c.setAttribute('aria-checked', String(sc.background === 'custom' && c.dataset.id === sc.customId)));
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  $<HTMLInputElement>('scene-bgdepth').value = String(sc.backgroundDepth); $('scene-bgdepth-out').textContent = pct(sc.backgroundDepth);
+  $<HTMLInputElement>('scene-pop').value = String(sc.subjectPop); $('scene-pop-out').textContent = pct(sc.subjectPop);
+  $<HTMLInputElement>('scene-sep').value = String(sc.separation); $('scene-sep-out').textContent = pct(sc.separation);
+  $<HTMLInputElement>('scene-edge').value = String(sc.edge); $('scene-edge-out').textContent = pct(sc.edge);
+  $<HTMLInputElement>('scene-thr').value = String(sc.threshold);
+  $('scene-thr-out').textContent = Math.abs(sc.threshold) < 0.005 ? 'auto' : `auto ${sc.threshold > 0 ? '+' : '−'}${Math.round(Math.abs(sc.threshold) * 100)}`;
+  $<HTMLInputElement>('scene-shadow').checked = sc.shadow;
 
   // Depth
   const d = s.depth;
@@ -561,6 +712,8 @@ async function loadImage(p: Promise<ImportedImage>) {
     settings.layout.crop = defaultCrop(img.image.width, img.image.height, size.eyeWidth, size.eyeHeight);
     await worker.setSource(img.image);
     preview.setOriginal(img.bitmap);
+    sceneShown = false;
+    drawSceneSwatches();
     const info = $('image-info');
     info.classList.remove('hidden');
     const mp = (img.image.width * img.image.height) / 1e6;
@@ -763,6 +916,31 @@ function bindAll() {
   const onSelect = (id: string, apply: (v: string) => void) => {
     $<HTMLSelectElement>(id).addEventListener('change', (e) => { apply((e.target as HTMLSelectElement).value); commit(); });
   };
+  // 3D Scene
+  onInput('scene-enabled', (el) => { settings.scene.enabled = el.checked; }, 'change');
+  document.querySelectorAll<HTMLButtonElement>('#scene-grid .scene-card').forEach((b) => {
+    b.addEventListener('click', () => {
+      settings.scene.background = b.dataset.value as SceneBackground;
+      settings.scene.enabled = true;
+      commit();
+    });
+  });
+  const sceneBgInput = $<HTMLInputElement>('scene-bg-input');
+  sceneBgInput.accept = ACCEPT_ATTR;
+  $('scene-add').addEventListener('click', () => sceneBgInput.click());
+  sceneBgInput.addEventListener('change', () => {
+    const files = imageFiles(sceneBgInput.files);
+    sceneBgInput.value = '';
+    if (files.length) void addCustomBackgrounds(files);
+  });
+  onInput('scene-bgdepth', (el) => { settings.scene.backgroundDepth = num(el, 0.8); });
+  onInput('scene-pop', (el) => { settings.scene.subjectPop = num(el, 0.5); });
+  onInput('scene-sep', (el) => { settings.scene.separation = num(el, 0.5); });
+  onInput('scene-edge', (el) => { settings.scene.edge = num(el, 0.3); });
+  onInput('scene-thr', (el) => { settings.scene.threshold = num(el, 0); });
+  onInput('scene-shadow', (el) => { settings.scene.shadow = el.checked; }, 'change');
+  $('scene-shuffle').addEventListener('click', () => { settings.scene.seed = (settings.scene.seed % 9973) + 1; commit(); });
+
   onInput('aspect-w', (el) => { settings.output.customAspectW = Math.max(0.1, num(el, 9)); }, 'change');
   onInput('aspect-h', (el) => { settings.output.customAspectH = Math.max(0.1, num(el, 16)); }, 'change');
   onSelect('resolution', (value) => {
@@ -957,6 +1135,16 @@ function round(v: number) {
 
 bindAll();
 syncUI();
+drawSceneSwatches();
+void listBackgrounds().then((list) => {
+  savedBgs = list;
+  if (settings.scene.background === 'custom' && !list.some((b) => b.id === settings.scene.customId)) {
+    settings.scene.background = 'auto';
+    settings.scene.customId = null;
+  }
+  renderCustomBackgrounds();
+  syncUI();
+});
 
 // Offline support / installable app (production builds only).
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

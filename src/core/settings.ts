@@ -3,6 +3,7 @@ import type { BackgroundSpec } from './background';
 import type { LayoutSpec, OutputSizeSpec, StereoFormat } from './layout';
 import type { MotionSettings } from './motion';
 import { DEFAULT_STEREOGRAM, type StereogramSettings } from './autostereogram';
+import { DEFAULT_SCENE, type SceneSettings } from './scene';
 import type { Interpolation } from './types';
 
 export type ShiftDirection = 1 | -1;
@@ -61,8 +62,10 @@ export interface StereoSettings {
   wiggleFrameMs: number;
   /** "3D photo" camera-motion animation. */
   motion: MotionSettings;
-  /** Hidden-3D single-image autostereogram (Magic Eye style). */
+  /** Single-image autostereogram (Magic Eye style). */
   stereogram: StereogramSettings;
+  /** 3D Scene: new depth background + subject pop (applied before every style). */
+  scene: SceneSettings;
   /** File type for still formats (sbs, half-sbs, ou, half-ou, anaglyph). */
   exportFormat: ImageFileFormat;
   /** 0..1 quality for JPEG / WEBP / MPO. */
@@ -98,7 +101,8 @@ export const DEFAULT_SETTINGS: StereoSettings = {
   wiggleFrames: 2,
   wiggleFrameMs: 140,
   motion: { path: 'circle', amplitude: 20, durationMs: 3000, file: 'video' },
-  stereogram: { ...DEFAULT_STEREOGRAM },
+  stereogram: { ...DEFAULT_STEREOGRAM, sketch: { ...DEFAULT_STEREOGRAM.sketch } },
+  scene: { ...DEFAULT_SCENE },
   exportFormat: 'png',
   exportQuality: 0.95,
 };
