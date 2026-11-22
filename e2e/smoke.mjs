@@ -243,6 +243,27 @@ await waitRender();
   const frames = gifFrameCount(f.bytes);
   check(f.name.endsWith('.gif') && frames === 45, `motion GIF (zoom): ${f.name}, ${frames} frames`);
 }
+// Hidden 3D (Magic Eye) stereogram: export and verify it repeats every pattern width.
+await chooseStyle('stereogram');
+await page.waitForTimeout(400);
+await page.screenshot({ path: join(out, 'style_stereogram.png') });
+{
+  const f = await exportFile();
+  const png = decode(f.bytes);
+  const P = Math.round(png.width / 6), ch = png.channels;
+  // Flat (background) rows repeat exactly every pattern width.
+  let bestRow = 0;
+  for (let y = 60; y < png.height; y += 10) {
+    let same = 0, total = 0;
+    for (let x = 0; x + P < png.width; x++) {
+      total++;
+      if (png.data[(y * png.width + x) * ch] === png.data[(y * png.width + x + P) * ch]) same++;
+    }
+    bestRow = Math.max(bestRow, same / total);
+  }
+  check(f.name.includes('stereogram') && png.width === 1080 && bestRow > 0.9,
+    `hidden 3D stereogram: ${f.name}, background repeats every ${P} px (${Math.round(100 * bestRow)}%)`);
+}
 const thumbsDrawn = await page.evaluate(() => [...document.querySelectorAll('.style-card canvas')].every((c) => {
   const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
   for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true;

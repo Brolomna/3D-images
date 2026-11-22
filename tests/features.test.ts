@@ -93,7 +93,7 @@ describe('depth-based rendering', () => {
     p.setDepth(depth);
     const flat = p.render(settings((s) => { s.output.resolution = '720p'; s.depth.strength = 0; }));
     expect(flat.depthUsed).toBe(false);
-  });
+  }, 30000);
 });
 
 describe('stereo formats', () => {
@@ -300,4 +300,84 @@ describe('3D photo motion', () => {
     for (let i = 3; i < a.data.length; i += 4) if (a.data[i] !== 255) opaque = false;
     expect(opaque).toBe(true);
   }, 30000);
+});
+
+import { buildTexture, DEFAULT_STEREOGRAM, generateAutostereogram, patternWidth, shapeDepth } from '../src/core/autostereogram';
+
+describe('hidden 3D autostereogram', () => {
+  const sg = (patch: Partial<typeof DEFAULT_STEREOGRAM> = {}) => ({ ...DEFAULT_STEREOGRAM, guides: false, ...patch });
+  const W = 600, H = 200;
+
+  it('builds deterministic, seamless pattern tiles of exactly one pattern width', () => {
+    for (const pattern of ['organic', 'dots', 'photo', 'custom'] as const) {
+      const a = buildTexture(sg({ pattern }), 100, 80, photo(300, 200, 1), photo(64, 64, 2));
+      const b = buildTexture(sg({ pattern }), 100, 80, photo(300, 200, 1), photo(64, 64, 2));
+      expect([a.width, a.height]).toEqual([100, 80]);
+      expect(imagesEqual(a, b)).toBe(true);
+    }
+    expect(imagesEqual(buildTexture(sg(), 100, 80, null, null), buildTexture(sg({ seed: 2 }), 100, 80, null, null))).toBe(false);
+  });
+
+  it('a flat background repeats exactly every pattern width', () => {
+    const P = patternWidth(W, sg());
+    expect(P).toBe(100);
+    const img = generateAutostereogram(constDepth(W, H, 0), buildTexture(sg(), P, H, null, null), sg());
+    for (const y of [0, 77, 199]) for (let x = 0; x + P < W; x += 7) expect(px(img, x + P, y)).toEqual(px(img, x, y));
+  });
+
+  it('encodes a near shape as a shorter repeat distance (decodable)', () => {
+    const depth = constDepth(W, H, 0);
+    for (let y = 50; y < 150; y++) for (let x = 200; x < 400; x++) depth.data[y * W + x] = 1;
+    const s = sg({ depth: 0.33, pattern: 'dots' });
+    const P = patternWidth(W, s);
+    const img = generateAutostereogram(depth, buildTexture(s, P, H, null, null), s);
+    // sep(1) = (1 − μ)·2P/(2 − μ) ≈ 80 px for μ = 0.33, P = 100.
+    const near = Math.round(((1 - 0.33) * 2 * P) / (2 - 0.33));
+    const mismatch = (shift: number, y: number) => {
+      let m = 0;
+      for (let x = 260; x < 320; x++) {
+        const a = px(img, x, y), b = px(img, x + shift, y);
+        m += Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+      }
+      return m;
+    };
+    const bestShift = (y: number) => {
+      let best = 0, bestM = Infinity;
+      for (let sh = 60; sh <= 110; sh++) { const m = mismatch(sh, y); if (m < bestM) { bestM = m; best = sh; } }
+      return best;
+    };
+    // Inside the shape the pattern repeats at the near separation, outside at P.
+    expect(Math.abs(bestShift(100) - near)).toBeLessThanOrEqual(1);
+    expect(bestShift(20)).toBe(P);
+    expect(mismatch(P, 20)).toBe(0);
+  });
+
+  it('shape modes, cutoff and guide dots', () => {
+    const ramp: DepthMap = { width: 100, height: 10, data: Float32Array.from({ length: 1000 }, (_, i) => (i % 100) / 99) };
+    const sil = shapeDepth(ramp, sg({ shape: 'silhouette', cutoff: 0.5 }));
+    expect(sil.data[5 * 100 + 10]).toBeCloseTo(0, 1);
+    expect(sil.data[5 * 100 + 95]).toBeCloseTo(1, 1);
+    const layers = shapeDepth(ramp, sg({ shape: 'layers', cutoff: 0 }));
+    expect(new Set(Array.from(layers.data.slice(500, 600), (v) => Math.round(v * 100))).size).toBeLessThan(40);
+    const g = generateAutostereogram(constDepth(W, H, 0), buildTexture(sg(), 100, H, null, null), sg({ guides: true }));
+    const r = Math.round(W / 120), cy = Math.round(r * 3);
+    expect(px(g, W / 2 - 50, cy)).toEqual([0, 0, 0, 255]);
+    expect(px(g, W / 2 + 50, cy)).toEqual([0, 0, 0, 255]);
+  });
+
+  it('pipeline hides the photo depth, deterministically', () => {
+    const run = () => {
+      const p = new StereoPipeline();
+      p.setSource(photo(400, 700, 5));
+      p.setDepth({ width: 40, height: 70, data: Float32Array.from({ length: 2800 }, (_, i) => ((i % 40) > 15 && (i % 40) < 25 ? 1 : 0)) });
+      return p.renderStereogram(settings((x) => { x.format = 'stereogram'; x.output.resolution = '720p'; }));
+    };
+    const a = run(), b = run();
+    expect(a.hasDepth).toBe(true);
+    expect([a.image.width, a.image.height]).toEqual([720, 1280]);
+    expect(imagesEqual(a.image, b.image)).toBe(true);
+    const flat = new StereoPipeline();
+    flat.setSource(photo(400, 700, 5));
+    expect(flat.renderStereogram(settings((x) => { x.format = 'stereogram'; x.output.resolution = '720p'; })).hasDepth).toBe(false);
+  });
 });

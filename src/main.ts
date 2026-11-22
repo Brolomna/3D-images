@@ -12,6 +12,7 @@ import {
   type AnaglyphMethod, type StereoSettings,
 } from './core/settings';
 import { motionTiming, type MotionPath } from './core/motion';
+import type { StereogramPalette, StereogramPattern, StereogramShape } from './core/autostereogram';
 import type { Interpolation, RGBAImage } from './core/types';
 import { DepthClient, type DepthProgress } from './depth/client';
 import { ACCEPT_ATTR, createSampleImage, importFile, type ImportedImage } from './io/import';
@@ -61,10 +62,12 @@ type DepthState =
   | { kind: 'error'; message: string };
 let depthState: DepthState = { kind: 'none' };
 let lastMotionFrame: RGBAImage | null = null;
+let lastStereogram: RGBAImage | null = null;
+let customTextureLoaded = false;
 
 /** Depth is needed for depth-based stereo and always for the motion style. */
 function depthWanted(s = settings): boolean {
-  return s.depth.enabled || s.format === 'motion';
+  return s.depth.enabled || s.format === 'motion' || s.format === 'stereogram';
 }
 let imageToken = 0;
 
@@ -79,10 +82,11 @@ const preview = new PreviewRenderer($('stage'), $<HTMLCanvasElement>('stage-canv
   sbs: $<HTMLCanvasElement>('thumb-sbs'),
 });
 
-worker.onRender = ({ left, right, depth, info, motion }) => {
+worker.onRender = ({ left, right, depth, info, motion, special }) => {
   lastInfo = info;
   // Compose the selected format with the same code the exporter uses.
-  const output = composeLayout(left, right, settings.format, settings.arrangement, settings.anaglyphMethod, settings.resizeInterpolation);
+  const output = special ?? composeLayout(left, right, settings.format, settings.arrangement, settings.anaglyphMethod, settings.resizeInterpolation);
+  lastStereogram = special;
   let anim: { frames: RGBAImage[]; frameMs: number } | null = null;
   if (settings.format === 'wiggle') anim = { frames: [left, right], frameMs: settings.wiggleFrameMs };
   else if (settings.format === 'motion' && motion) anim = { frames: motion.frames, frameMs: settings.motion.durationMs / motion.frames.length };
@@ -274,7 +278,7 @@ function fmt(n: number, d = 2) {
 
 const FORMAT_LABEL: Record<StereoFormat, string> = {
   sbs: 'Side-by-side', 'half-sbs': 'Half side-by-side', ou: 'Over/under', 'half-ou': 'Half over/under',
-  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion',
+  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion', stereogram: 'Hidden 3D stereogram',
 };
 
 // ───────────────────────── 3D style picker ─────────────────────────
@@ -304,6 +308,7 @@ function updateStyleThumbs(left: RGBAImage, right: RGBAImage) {
       let img: RGBAImage;
       if (f === 'wiggle') img = l;
       else if (f === 'motion') img = lastMotionFrame ? shrink(lastMotionFrame, 120) : l;
+      else if (f === 'stereogram') img = lastStereogram ? shrink(lastStereogram, 120) : l;
       else img = composeLayout(l, r, f === 'mpo' ? 'sbs' : f, settings.arrangement, settings.anaglyphMethod, 'bilinear');
       const c = card.querySelector('canvas')!;
       const g = c.getContext('2d')!;
@@ -417,6 +422,19 @@ function syncUI() {
   setSeg('motionPath', s.motion.path);
   setSeg('motionFile', s.motion.file);
   $('motion-options').classList.toggle('hidden', s.format !== 'motion');
+  const sg = s.stereogram;
+  $('stereogram-options').classList.toggle('hidden', s.format !== 'stereogram');
+  setSeg('sgPattern', sg.pattern);
+  setSeg('sgShape', sg.shape);
+  setSeg('sgViewing', sg.viewing);
+  $<HTMLSelectElement>('sg-palette').value = sg.palette;
+  $<HTMLInputElement>('sg-repeats').value = String(sg.repeats);
+  $('sg-repeats-out').textContent = `${sg.repeats}× · ${Math.round(outputSize().width / sg.repeats)} px`;
+  $<HTMLInputElement>('sg-depth').value = String(sg.depth);
+  $('sg-depth-out').textContent = `${Math.round(sg.depth * 100)}%`;
+  $<HTMLInputElement>('sg-cutoff').value = String(sg.cutoff);
+  $('sg-cutoff-out').textContent = `${Math.round(sg.cutoff * 100)}%`;
+  $<HTMLInputElement>('sg-guides').checked = sg.guides;
   $<HTMLInputElement>('motion-amount').value = String(s.motion.amplitude);
   $('motion-amount-out').textContent = `${s.motion.amplitude} px`;
   $<HTMLInputElement>('motion-duration').value = String(s.motion.durationMs);
@@ -756,6 +774,40 @@ function bindAll() {
     });
   });
   bindSeg('motionPath', (v) => { settings.motion.path = v as MotionPath; });
+  bindSeg('sgShape', (v) => { settings.stereogram.shape = v as StereogramShape; });
+  bindSeg('sgViewing', (v) => { settings.stereogram.viewing = v as 'parallel' | 'cross'; });
+  document.querySelectorAll<HTMLButtonElement>('.seg[data-setting="sgPattern"] button').forEach((b) => {
+    b.addEventListener('click', () => {
+      const v = b.dataset.value as StereogramPattern;
+      if (v === 'custom' && !customTextureLoaded) { $<HTMLInputElement>('texture-input').click(); return; }
+      settings.stereogram.pattern = v;
+      commit();
+    });
+  });
+  $<HTMLInputElement>('texture-input').addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const f = input.files?.[0];
+    input.value = '';
+    if (!f) return;
+    try {
+      const t = await importFile(f);
+      t.bitmap.close();
+      // Keep textures modest: the tile is at most the output height anyway.
+      await worker.setTexture(t.image);
+      customTextureLoaded = true;
+      settings.stereogram.pattern = 'custom';
+      commit();
+      toast(`Texture "${t.name}" loaded`);
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  });
+  onSelect('sg-palette', (v) => { settings.stereogram.palette = v as StereogramPalette; });
+  onInput('sg-repeats', (el) => { settings.stereogram.repeats = num(el, 6); });
+  onInput('sg-depth', (el) => { settings.stereogram.depth = num(el, 0.33); });
+  onInput('sg-cutoff', (el) => { settings.stereogram.cutoff = num(el, 0.25); });
+  onInput('sg-guides', (el) => { settings.stereogram.guides = el.checked; }, 'change');
+  $('sg-shuffle').addEventListener('click', () => { settings.stereogram.seed = (settings.stereogram.seed % 9973) + 1; commit(); });
   bindSeg('motionFile', (v) => { settings.motion.file = v as 'video' | 'gif'; });
   onInput('motion-amount', (el) => { settings.motion.amplitude = num(el, 20); });
   onInput('motion-duration', (el) => { settings.motion.durationMs = num(el, 3000); });

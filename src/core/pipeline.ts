@@ -14,6 +14,7 @@ import { buildBackground } from './background';
 import { depthToImage, normalizeDepth, renderDepthFrame, smoothDepth, type DepthMap } from './depth';
 import { composeLayout } from './formats';
 import { renderMotionFrame } from './motion';
+import { buildTexture, generateAutostereogram, patternWidth, shapeDepth } from './autostereogram';
 import {
   computeMapping, resolveOutputSize, visibleSourceRect, zoomMapping,
   type CropRect, type Mapping, type OutputSize,
@@ -131,12 +132,13 @@ export class StereoPipeline {
     const syScale = eyeH / size.eyeHeight;
     const dx = off.dx * sxScale;
     const dy = off.dy * syScale;
-    const motion = settings.format === 'motion';
+    // Mono depth-driven styles: no stereo pair, depth always wanted.
+    const motion = settings.format === 'motion' || settings.format === 'stereogram';
     const depthUsed = !motion && settings.depth.enabled && !!this.rawDepth && settings.depth.strength !== 0;
     const strength = depthUsed ? settings.depth.strength * sxScale : 0;
     const farSide = Math.max(settings.depth.focus, 1 - settings.depth.focus);
     // Motion parallax amplitude at this render scale (mono animation).
-    const motionAmp = motion && this.rawDepth ? Math.abs(settings.motion.amplitude) * sxScale : 0;
+    const motionAmp = settings.format === 'motion' && this.rawDepth ? Math.abs(settings.motion.amplitude) * sxScale : 0;
     // Largest possible |disparity| (depth term spans strength·max(focus, 1−focus)).
     const maxD = Math.abs(dx) + strength * farSide + motionAmp * farSide;
     const maxDy = Math.abs(dy) + motionAmp * farSide;
@@ -238,6 +240,39 @@ export class StereoPipeline {
       visible: visibleSourceRect(p.mapping, src.width, src.height, p.base.eyeW, p.base.eyeH),
       baseReused: p.baseReused,
       timings: { base: t1 - t0, views: t2 - t1, compose: t3 - t2 },
+    };
+  }
+
+  /** Optional user texture for the stereogram 'custom' pattern. */
+  private customTexture: RGBAImage | null = null;
+
+  setCustomTexture(img: RGBAImage | null): void {
+    this.customTexture = img;
+  }
+
+  /**
+   * Hidden-3D autostereogram of the current photo: its depth map is the
+   * hidden shape. Returns null-depth flag when no depth map is available yet.
+   */
+  renderStereogram(settings: StereoSettings, renderScale = 1): { image: RGBAImage; hasDepth: boolean; depth: RGBAImage | null } {
+    const s = settings.format === 'stereogram' ? settings : { ...settings, format: 'stereogram' as const };
+    const p = this.prepare(s, renderScale);
+    const { eyeW, eyeH, marginX, marginY } = p.base;
+    const flat: DepthMap = { width: eyeW, height: eyeH, data: new Float32Array(eyeW * eyeH) };
+    let shape = flat;
+    if (p.depthFrame) {
+      const f = p.depthFrame;
+      const crop = new Float32Array(eyeW * eyeH);
+      for (let y = 0; y < eyeH; y++) crop.set(f.data.subarray((y + marginY) * f.width + marginX, (y + marginY) * f.width + marginX + eyeW), y * eyeW);
+      shape = shapeDepth({ width: eyeW, height: eyeH, data: crop }, s.stereogram);
+    }
+    const P = patternWidth(eyeW, s.stereogram);
+    const photo = s.stereogram.pattern === 'photo' ? generateReferenceView(p.base) : null;
+    const texture = buildTexture(s.stereogram, P, eyeH, photo, this.customTexture);
+    return {
+      image: generateAutostereogram(shape, texture, s.stereogram),
+      hasDepth: !!p.depthFrame,
+      depth: p.depthFrame ? depthToImage(shape) : null,
     };
   }
 

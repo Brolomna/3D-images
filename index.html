@@ -178,6 +178,11 @@
             <span class="style-name">3D photo motion</span>
             <span class="style-need">No glasses · parallax video</span>
           </button>
+          <button class="style-card" data-value="stereogram" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Hidden 3D (Magic Eye)</span>
+            <span class="style-need">Relax your eyes · no glasses</span>
+          </button>
           <button class="style-card" data-value="wiggle" role="radio" aria-checked="false">
             <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
             <span class="style-name">Wiggle</span>
@@ -333,6 +338,49 @@
             <button data-value="gif">GIF</button>
           </div>
           <p class="hint">Uses the depth map: near parts move more than far parts. The depth panel's focus plane sets which depth stays still.</p>
+        </div>
+        <div id="stereogram-options" class="stack hidden">
+          <span class="label">Pattern</span>
+          <div class="seg small" data-setting="sgPattern" role="radiogroup" aria-label="Stereogram pattern">
+            <button data-value="organic" title="Leaf-like organic pattern">Leaves</button>
+            <button data-value="dots" title="Classic random dots">Dots</button>
+            <button data-value="photo" title="A strip of your photo">Photo</button>
+            <button data-value="custom" title="Upload any texture image">Texture…</button>
+          </div>
+          <input id="texture-input" type="file" accept="image/*" hidden />
+          <label class="field"><span>Colours</span>
+            <select id="sg-palette">
+              <option value="jungle">Jungle green</option>
+              <option value="ocean">Ocean</option>
+              <option value="sunset">Sunset</option>
+              <option value="rainbow">Rainbow</option>
+              <option value="mono">Grey</option>
+              <option value="original">Original colours</option>
+            </select>
+          </label>
+          <label class="slider"><span>Repeats across <output id="sg-repeats-out"></output></span>
+            <input id="sg-repeats" type="range" min="4" max="12" step="1" />
+          </label>
+          <label class="slider"><span>Depth <output id="sg-depth-out"></output></span>
+            <input id="sg-depth" type="range" min="0.1" max="0.5" step="0.01" />
+          </label>
+          <span class="label">Hidden shape</span>
+          <div class="seg small" data-setting="sgShape" role="radiogroup" aria-label="Hidden shape">
+            <button data-value="smooth" title="Full 3D relief from the depth map">Smooth</button>
+            <button data-value="layers" title="Stepped layers, easier to see">Layers</button>
+            <button data-value="silhouette" title="Flat cut-out of the subject">Silhouette</button>
+          </div>
+          <label class="slider"><span>Flatten background <output id="sg-cutoff-out"></output></span>
+            <input id="sg-cutoff" type="range" min="0" max="0.8" step="0.01" />
+          </label>
+          <span class="label">Made for</span>
+          <div class="seg small" data-setting="sgViewing" role="radiogroup" aria-label="Viewing method">
+            <button data-value="parallel" title="Relaxed / wall-eyed viewing (standard Magic Eye)">Relaxed eyes</button>
+            <button data-value="cross" title="Cross-eyed viewing">Cross-eyed</button>
+          </div>
+          <label class="check"><input id="sg-guides" type="checkbox" /> Guide dots (help your eyes lock on)</label>
+          <button id="sg-shuffle" class="btn small ghost wide">New pattern</button>
+          <p class="hint">How to see it: hold the image close, look "through" it as if at something far away, then slowly move back until the two guide dots become three — the hidden shape appears. The shape is your photo's depth map (see the Depth view).</p>
         </div>
         <label id="quality-field" class="slider hidden"><span>Quality <output id="quality-out"></output></span>
           <input id="quality" type="range" min="0.5" max="1" step="0.01" />

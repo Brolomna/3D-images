@@ -10,7 +10,9 @@ Turns an ordinary 2D photograph into a **3D image**. You pick a **3D style** fro
 
 The app **estimates the photo's depth itself**. Near parts of the scene get more disparity than far parts, so the subject genuinely stands out from the background instead of the whole picture floating as one flat card.
 
-This is **not** a Magic Eye / random-dot stereogram generator. It adds no patterns, shadows or depth overlays, and it generates no new image content. Every output pixel is resampled from the original photo. The depth model only decides how far each pixel moves.
+The photo styles add no patterns, shadows or depth overlays, and they generate no new image content. Every output pixel is resampled from the original photo, and the depth model only decides how far each pixel moves.
+
+The one deliberate exception is the separate **Hidden 3D (Magic Eye)** style. It hides the photo's depth inside a repeating texture, which is how autostereograms work.
 
 Everything runs in the browser. Photos never leave your device.
 
@@ -79,9 +81,33 @@ The **Choose 3D style** panel shows live thumbnails of *your* photo in every sty
 | Anaglyph | Red/cyan; Dubois (default), half-colour, full-colour or grey |
 | Wiggle | Animated GIF or video (MP4/H.264, WebM fallback). Classic 2-frame flip or a smooth 6/12-frame sweep, adjustable speed |
 | MPO | Multi-Picture JPEG with a left + right pair (CIPA DC-007), readable by 3D cameras, 3D displays, the Nintendo 3DS and StereoPhoto Maker |
+| Hidden 3D (Magic Eye) | A single-image autostereogram: the photo's 3D shape is hidden in a repeating texture and appears when you relax your eyes. See below |
 | 3D photo motion | A glasses-free looping parallax animation, MP4 (30 fps) or GIF (15 fps). A virtual camera moves in front of the photo and near parts move more than far parts. Camera paths: circle, left-right sway, up-down sway, or zoom. Movement amount and loop length (1.5–8 s) are adjustable. It needs the depth map, and the depth panel's focus plane sets which depth stays still |
 
 Exports always render at full resolution. The *Output* preview shows exactly what will be exported.
+
+### Hidden 3D (Magic Eye) stereograms
+Autostereograms like the classic *Magic Eye* prints repeat a texture strip across the image.
+
+**How it works:**
+- Wherever the hidden object is nearer, the repeat distance is a little shorter.
+- When your eyes relax and lock onto neighbouring repeats, the brain reads those distance differences as depth and the shape floats out of the pattern.
+- The app uses the photo's estimated depth map as the hidden shape. The depth-to-separation geometry follows Thimbleby, Inglis & Witten, *Displaying 3D images: algorithms for single-image random-dot stereograms*, IEEE Computer 27(10), 1994: `sep(Z) = (1 − μZ)·E / (2 − μZ)`.
+- Texture coordinates propagate outward from the centre, so each repeat is a smoothly deformed copy of its neighbour (the coherent Magic Eye look).
+- Rows are computed at 3× horizontal resolution for smooth, sub-pixel depth.
+
+**Options:**
+- **Pattern:** organic leaves, random dots, a strip of your photo, or any uploaded texture.
+- **Colours:** jungle green, ocean, sunset, rainbow, grey or original. Image textures are tinted, like the classic green prints.
+- **Repeats across:** sets the pattern width.
+- **Depth amount (μ):** how far the shape stands out.
+- **Hidden shape:** smooth relief, stepped layers or a flat silhouette.
+- **Flatten background:** turns distant parts into a flat backdrop.
+- **Made for:** relaxed (wall-eyed) or cross-eyed viewing.
+- **Guide dots** above the image help your eyes lock on.
+- **New pattern** reshuffles the texture.
+
+The *Depth* view shows the hidden shape.
 
 ### Workflow
 - **Batch:** process many photos with the current settings and download them as one ZIP. Dropping several files on the page does the same.
@@ -118,6 +144,7 @@ depth model ─► normalise/smooth ─► depth frame aligned with the base (ca
 | 8 | Preview renderer | `ui/preview.ts` |
 | 9 | Export engine | `worker/stereo.worker.ts`, `worker/video.ts`, `core/encode.ts`, `core/gif.ts`, `core/mpo.ts` |
 | — | 3D photo motion | `core/motion.ts` (2-pass depth warp: horizontal, then vertical via transposition) |
+| — | Hidden 3D stereogram | `core/autostereogram.ts` (textures, depth shaping, generator) |
 
 Key properties:
 
@@ -143,7 +170,8 @@ Key properties:
   - GIF and MPO structure;
   - the stereo window mask;
   - share-link round trips and robustness;
-  - motion paths, timing, near-vs-far parallax with no smearing, and deterministic full-size frames.
+  - motion paths, timing, near-vs-far parallax with no smearing, and deterministic full-size frames;
+  - stereogram tiles; exact repetition of a flat background; a near shape decoding to the predicted shorter separation; shape modes and guide dots.
 
 `e2e/smoke.mjs` drives the real UI in Chromium:
 - It uploads PNG and TIFF files and waits for automatic depth analysis.

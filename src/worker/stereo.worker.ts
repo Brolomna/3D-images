@@ -21,6 +21,7 @@ const preview = new StereoPipeline();
 let exportPipeline: StereoPipeline | null = null;
 let source: RGBAImage | null = null;
 let depth: DepthMap | null = null;
+let texture: RGBAImage | null = null;
 
 function post(msg: WorkerResponse, transfer: Transferable[] = []) {
   ctx.postMessage(msg, transfer);
@@ -42,12 +43,24 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       preview.setDepth(depth);
       exportPipeline?.setDepth(depth);
       post({ type: 'ok', id: msg.id });
+    } else if (msg.type === 'texture') {
+      texture = msg.texture ? { width: msg.texture.width, height: msg.texture.height, data: new Uint8ClampedArray(msg.texture.buffer) } : null;
+      preview.setCustomTexture(texture);
+      exportPipeline?.setCustomTexture(texture);
+      post({ type: 'ok', id: msg.id });
     } else if (msg.type === 'render') {
       const t0 = performance.now();
       const r = preview.render(msg.settings, msg.scale, { compose: false, includeDepth: msg.includeDepth });
       const left = r.left.data.buffer as ArrayBuffer;
       const right = (r.right === r.left ? r.right.data.slice() : r.right.data).buffer as ArrayBuffer;
-      const dbuf = r.depth ? (r.depth.data.buffer as ArrayBuffer) : null;
+      let special: { width: number; height: number; buffer: ArrayBuffer; hasDepth: boolean } | null = null;
+      let depthImg = r.depth;
+      if (msg.settings.format === 'stereogram') {
+        const st = preview.renderStereogram(msg.settings, msg.scale);
+        special = { width: st.image.width, height: st.image.height, buffer: st.image.data.buffer as ArrayBuffer, hasDepth: st.hasDepth };
+        if (msg.includeDepth) depthImg = st.depth ?? undefined; // show the hidden shape
+      }
+      const dbuf = depthImg ? (depthImg.data.buffer as ArrayBuffer) : null;
       let motion: { width: number; height: number; frames: ArrayBuffer[]; hasDepth: boolean } | null = null;
       if (msg.motion && msg.settings.format === 'motion') {
         const m = preview.motionRenderer(msg.settings, msg.motion.scale);
@@ -57,9 +70,10 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           : [m.frame(0).data.buffer as ArrayBuffer];
         motion = { width: m.width, height: m.height, frames, hasDepth: m.hasDepth };
       }
-      const transfer: Transferable[] = [left, right, ...(dbuf ? [dbuf] : []), ...(motion?.frames ?? [])];
+      const transfer: Transferable[] = [left, right, ...(dbuf ? [dbuf] : []), ...(motion?.frames ?? []), ...(special ? [special.buffer] : [])];
       post({
         motion,
+        special,
         type: 'rendered', id: msg.id, eyeW: r.left.width, eyeH: r.left.height, left, right, depth: dbuf,
         info: {
           fullWidth: r.size.width, fullHeight: r.size.height, eyeWidth: r.size.eyeWidth, eyeHeight: r.size.eyeHeight,
@@ -73,12 +87,14 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         pipeline = new StereoPipeline();
         pipeline.setSource({ width: msg.item.width, height: msg.item.height, data: new Uint8ClampedArray(msg.item.buffer) });
         pipeline.setDepth(toDepth(msg.item.depth));
+        pipeline.setCustomTexture(texture);
       } else {
         if (!source) throw new Error('No image loaded');
         if (!exportPipeline) {
           exportPipeline = new StereoPipeline();
           exportPipeline.setSource(source);
           exportPipeline.setDepth(depth);
+          exportPipeline.setCustomTexture(texture);
         }
         pipeline = exportPipeline;
       }
@@ -143,7 +159,14 @@ async function exportFormat(p: StereoPipeline, s: StereoSettings, progress: (s: 
     const bytes = assembleMPO(new Uint8Array(await l.arrayBuffer()), new Uint8Array(await rr.arrayBuffer()));
     return { blob: new Blob([bytes as BlobPart], { type: 'image/mpo' }), ext: 'mpo', width: size.width, height: size.height };
   }
-  const r = p.render(s, 1);
+  let r: { output: RGBAImage };
+  if (s.format === 'stereogram') {
+    const st = p.renderStereogram(s, 1);
+    if (!st.hasDepth) throw new Error('The hidden-3D stereogram needs the depth map, which is not available yet.');
+    r = { output: st.image };
+  } else {
+    r = p.render(s, 1);
+  }
   progress(`Encoding ${s.exportFormat.toUpperCase()}…`);
   let blob: Blob;
   if (s.exportFormat === 'png') blob = new Blob([encodePNG(r.output) as BlobPart], { type: 'image/png' });

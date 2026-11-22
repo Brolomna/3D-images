@@ -11,6 +11,8 @@ export interface RenderOutput {
   info: RenderInfo;
   /** Preview frames of the motion animation (motion style only). */
   motion: { frames: RGBAImage[]; hasDepth: boolean } | null;
+  /** Finished image of the stereogram style. */
+  special: (RGBAImage & { hasDepth: boolean }) | null;
 }
 
 export type ExportResult = Extract<WorkerResponse, { type: 'exported' }>;
@@ -67,6 +69,14 @@ export class StereoWorkerClient {
     await this.call({ type: 'source', id: this.nextId++, width: img.width, height: img.height, buffer: copy.buffer }, [copy.buffer]);
   }
 
+  async setTexture(t: RGBAImage | null): Promise<void> {
+    const copy = t ? t.data.slice() : null;
+    await this.call(
+      { type: 'texture', id: this.nextId++, texture: t && copy ? { width: t.width, height: t.height, buffer: copy.buffer } : null },
+      copy ? [copy.buffer] : [],
+    );
+  }
+
   async setDepth(d: DepthMap | null): Promise<void> {
     const depth = rawDepth(d);
     await this.call({ type: 'depth', id: this.nextId++, depth }, depth ? [depth.buffer] : []);
@@ -88,7 +98,10 @@ export class StereoWorkerClient {
         const img = (b: ArrayBuffer): RGBAImage => ({ width: r.eyeW, height: r.eyeH, data: new Uint8ClampedArray(b) });
         const m = r.motion;
         const motion = m ? { hasDepth: m.hasDepth, frames: m.frames.map((b) => ({ width: m.width, height: m.height, data: new Uint8ClampedArray(b) })) } : null;
-        this.onRender({ left: img(r.left), right: img(r.right), depth: r.depth ? img(r.depth) : null, info: r.info, motion });
+        const sp = r.special;
+        const special = sp ? { width: sp.width, height: sp.height, data: new Uint8ClampedArray(sp.buffer), hasDepth: sp.hasDepth } : null;
+        const depthImg = r.depth ? (special ? { width: special.width, height: special.height, data: new Uint8ClampedArray(r.depth) } : img(r.depth)) : null;
+        this.onRender({ left: img(r.left), right: img(r.right), depth: depthImg, info: r.info, motion, special });
       } catch (e) {
         this.onError((e as Error).message);
       } finally {

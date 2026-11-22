@@ -50,8 +50,9 @@ export interface OutputSizeSpec {
  *  wiggle   – animation alternating the eyes, W × H frames (GIF / video)
  *  mpo      – multi-picture JPEG with two W × H views (3D cameras / displays)
  *  motion   – "3D photo": depth-driven camera-motion animation, W × H frames
+ *  stereogram – single-image autostereogram ("Magic Eye"), W × H
  */
-export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo' | 'motion';
+export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo' | 'motion' | 'stereogram';
 
 export interface OutputSize {
   /** Final output file size (for wiggle / mpo: size of each frame / image). */
