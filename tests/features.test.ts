@@ -7,7 +7,7 @@ import { resolveOutputSize } from '../src/core/layout';
 import { assembleMPO } from '../src/core/mpo';
 import { StereoPipeline } from '../src/core/pipeline';
 import { cloneSettings, DEFAULT_SETTINGS, type StereoSettings } from '../src/core/settings';
-import { createImage, imagesEqual } from '../src/core/types';
+import { createImage, imagesEqual, type RGBAImage } from '../src/core/types';
 import { decodeSettings, encodeSettings, settingsFromHash } from '../src/ui/share';
 import { photo, px } from './fixtures';
 
@@ -227,4 +227,77 @@ describe('share links', () => {
     const evil = btoa(JSON.stringify({ horizontalOffset: 'x', __proto__: { a: 1 }, unknownKey: 5 })).replace(/=+$/, '');
     expect(decodeSettings(evil)!.horizontalOffset).toBe(14);
   });
+});
+
+import { motionOffsets, motionTiming, renderMotionFrame } from '../src/core/motion';
+import type { BaseFrame } from '../src/core/views';
+
+describe('3D photo motion', () => {
+  // Scene: gradient background (far, d=0) with a red square (near, d=1).
+  function scene(W = 200, H = 160, m = 40) {
+    const image = createImage(W, H);
+    const depth = constDepth(W, H, 0);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const fg = x >= 90 && x < 110 && y >= 70 && y < 90;
+      image.data.set(fg ? [255, 0, 0, 255] : [x, y, 128, 255], (y * W + x) * 4);
+      if (fg) depth.data[y * W + x] = 1;
+    }
+    const base: BaseFrame = { image, eyeW: W - 2 * m, eyeH: H - 2 * m, marginX: m, marginY: m, hasAlpha: false };
+    return { base, depth };
+  }
+  const red = (img: RGBAImage, x: number, y: number) => px(img, x, y)[0] === 255 && px(img, x, y)[1] === 0;
+
+  it('timing gives whole frames per loop', () => {
+    expect(motionTiming({ path: 'circle', amplitude: 20, durationMs: 3000, file: 'video' })).toEqual({ count: 90, frameMs: 1000 / 30 });
+    expect(motionTiming({ path: 'circle', amplitude: 20, durationMs: 3000, file: 'gif' }).count).toBe(45);
+  });
+
+  it('paths move the camera as described', () => {
+    expect(motionOffsets('horizontal', 10, 0.25).hx).toBeCloseTo(-10);
+    expect(motionOffsets('horizontal', 10, 0.25).vy).toBe(0);
+    expect(motionOffsets('vertical', 10, 0.25).vy).toBeCloseTo(-10);
+    expect(motionOffsets('circle', 10, 0).hx).toBeCloseTo(-10);
+    expect(motionOffsets('zoom', 10, 0.5).radial).toBeCloseTo(10);
+    expect(motionOffsets('zoom', 10, 0).radial).toBeCloseTo(0);
+  });
+
+  it('without depth, or at the focus depth, frames equal the still photo', () => {
+    const { base } = scene();
+    const ref = renderMotionFrame(base, null, 0.5, 'circle', 10, 0.3, 'bicubic');
+    expect(ref.width).toBe(120);
+    const flat = renderMotionFrame(base, constDepth(200, 160, 0.5), 0.5, 'circle', 10, 0.3, 'bicubic');
+    expect(imagesEqual(ref, flat)).toBe(true);
+  });
+
+  it('near objects move against a still background (horizontal sway)', () => {
+    const { base, depth } = scene();
+    // Square at eye x 50..69, y 30..49. Focus far → background still, square moves.
+    const f = renderMotionFrame(base, depth, 0, 'horizontal', 8, 0.25, 'nearest');
+    expect(red(f, 43, 40)).toBe(true); // moved 8 px left
+    expect(red(f, 61, 40)).toBe(true);
+    expect(red(f, 65, 40)).toBe(false); // revealed background, not smeared red
+    expect(px(f, 5, 5)).toEqual(px(base.image, 45, 45)); // background unchanged
+  });
+
+  it('vertical sway moves near objects vertically', () => {
+    const { base, depth } = scene();
+    const f = renderMotionFrame(base, depth, 0, 'vertical', 8, 0.25, 'nearest');
+    expect(red(f, 55, 23)).toBe(true); // moved 8 px up
+    expect(red(f, 55, 45)).toBe(false);
+  });
+
+  it('pipeline renders deterministic full-size motion frames', () => {
+    const p = new StereoPipeline();
+    p.setSource(photo(400, 700, 5));
+    p.setDepth({ width: 40, height: 70, data: Float32Array.from({ length: 2800 }, (_, i) => (i % 40) / 40) });
+    const s = settings((x) => { x.format = 'motion'; x.output.resolution = '720p'; });
+    const m = p.motionRenderer(s);
+    expect([m.width, m.height, m.hasDepth]).toEqual([720, 1280, true]);
+    const a = m.frame(0.1), b = p.motionRenderer(s).frame(0.1);
+    expect(imagesEqual(a, b)).toBe(true);
+    expect(imagesEqual(a, m.frame(0.4))).toBe(false);
+    let opaque = true;
+    for (let i = 3; i < a.data.length; i += 4) if (a.data[i] !== 255) opaque = false;
+    expect(opaque).toBe(true);
+  }, 30000);
 });

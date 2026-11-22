@@ -2,7 +2,11 @@
 
 **Live app: https://brolomna.github.io/3D-images/**
 
-Turns an ordinary 2D photograph into a **stereoscopic 3D image**. The app creates a left-eye view and a right-eye view of the photo and packages them as side-by-side, half side-by-side, over/under, anaglyph, a wiggle animation or an MPO file.
+Turns an ordinary 2D photograph into a **3D image**. You pick a **3D style** from visual cards:
+- stereoscopic side-by-side, half side-by-side or over/under (for 3D TVs and VR);
+- red/cyan anaglyph;
+- MPO;
+- glasses-free **wiggle** or **3D photo motion** animations.
 
 The app **estimates the photo's depth itself**. Near parts of the scene get more disparity than far parts, so the subject genuinely stands out from the background instead of the whole picture floating as one flat card.
 
@@ -64,8 +68,10 @@ npm run test:e2e   # browser end-to-end test (Playwright + Chromium; downloads t
 - **Edges:** *Extend* fills revealed edges with the surrounding real image. *Crop* zooms both views equally. An optional **stereo window mask** blanks the edge strips that only one eye can see.
 - **Interpolation:** nearest, bilinear, bicubic or Lanczos, chosen separately for resizing and for sub-pixel displacement.
 
-### Export formats
-| Format | Output |
+### 3D styles
+The **Choose 3D style** panel shows live thumbnails of *your* photo in every style, each with what you need to view it.
+
+| Style | Output |
 |---|---|
 | Side-by-side | Two full views, W/2 × H each (PNG / JPEG / WEBP) |
 | Half side-by-side | Each eye rendered W × H, squeezed to W/2 (3D TVs, VR players) |
@@ -73,6 +79,7 @@ npm run test:e2e   # browser end-to-end test (Playwright + Chromium; downloads t
 | Anaglyph | Red/cyan; Dubois (default), half-colour, full-colour or grey |
 | Wiggle | Animated GIF or video (MP4/H.264, WebM fallback). Classic 2-frame flip or a smooth 6/12-frame sweep, adjustable speed |
 | MPO | Multi-Picture JPEG with a left + right pair (CIPA DC-007), readable by 3D cameras, 3D displays, the Nintendo 3DS and StereoPhoto Maker |
+| 3D photo motion | A glasses-free looping parallax animation, MP4 (30 fps) or GIF (15 fps). A virtual camera moves in front of the photo and near parts move more than far parts. Camera paths: circle, left-right sway, up-down sway, or zoom. Movement amount and loop length (1.5–8 s) are adjustable. It needs the depth map, and the depth panel's focus plane sets which depth stays still |
 
 Exports always render at full resolution. The *Output* preview shows exactly what will be exported.
 
@@ -80,7 +87,7 @@ Exports always render at full resolution. The *Output* preview shows exactly wha
 - **Batch:** process many photos with the current settings and download them as one ZIP. Dropping several files on the page does the same.
 - **Share links:** the settings that differ from the defaults are stored in the URL (`#s=…`), and *Copy settings link* shares them. Photos are never part of the link.
 - **Installable and offline:** the app is a PWA. After the first visit it works offline, and the depth model also works offline once it has been downloaded.
-- **Preview modes:** output, synchronised L/R compare with pixel readout, wiggle, difference ×4, anaglyph check, depth map, and the original with the crop editor.
+- **Preview modes:** output (wiggle and motion styles play animated), synchronised L/R compare with pixel readout, wiggle, difference ×4, anaglyph check, depth map, and the original with the crop editor.
 - **Keyboard:** ←/→ nudges the offset (hold Shift for 0.1 px steps). ↑/↓ nudges the vertical offset. Ctrl/⌘+S exports.
 
 ## How it works
@@ -103,6 +110,7 @@ depth model ─► normalise/smooth ─► depth frame aligned with the base (ca
 | 7 | Composition engine (all formats) | `core/compose.ts`, `core/formats.ts` |
 | 8 | Preview renderer | `ui/preview.ts` |
 | 9 | Export engine | `worker/stereo.worker.ts`, `worker/video.ts`, `core/encode.ts`, `core/gif.ts`, `core/mpo.ts` |
+| — | 3D photo motion | `core/motion.ts` (2-pass depth warp: horizontal, then vertical via transposition) |
 
 Key properties:
 
@@ -127,10 +135,11 @@ Key properties:
   - anaglyph colour mapping and wiggle frames;
   - GIF and MPO structure;
   - the stereo window mask;
-  - share-link round trips and robustness.
+  - share-link round trips and robustness;
+  - motion paths, timing, near-vs-far parallax with no smearing, and deterministic full-size frames.
 
 `e2e/smoke.mjs` drives the real UI in Chromium:
 - It uploads PNG and TIFF files and waits for automatic depth analysis.
 - It verifies byte-identical exports against Node.
-- It exports every format and checks the files: PNG dimensions, MPO structure, GIF, and MP4/WebM.
+- It exports every style through the picker cards and checks the files: PNG dimensions, MPO structure, GIF, MP4/WebM, and the 3D photo motion video and GIF frame counts.
 - It checks batch ZIP, share links, presets, view modes, the mobile layout, and the production service worker working offline.

@@ -9,6 +9,8 @@ export interface RenderOutput {
   right: RGBAImage;
   depth: RGBAImage | null;
   info: RenderInfo;
+  /** Preview frames of the motion animation (motion style only). */
+  motion: { frames: RGBAImage[]; hasDepth: boolean } | null;
 }
 
 export type ExportResult = Extract<WorkerResponse, { type: 'exported' }>;
@@ -25,7 +27,7 @@ export class StereoWorkerClient {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private rendering = false;
-  private queued: { settings: StereoSettings; scale: number; includeDepth: boolean } | null = null;
+  private queued: { settings: StereoSettings; scale: number; includeDepth: boolean; motion: { frames: number; scale: number } | null } | null = null;
   onRender: (out: RenderOutput) => void = () => {};
   onError: (msg: string) => void = () => {};
 
@@ -71,8 +73,8 @@ export class StereoWorkerClient {
   }
 
   /** Request a preview render. Only the latest request is processed when busy. */
-  requestRender(settings: StereoSettings, scale: number, includeDepth: boolean): void {
-    this.queued = { settings: JSON.parse(JSON.stringify(settings)), scale, includeDepth };
+  requestRender(settings: StereoSettings, scale: number, includeDepth: boolean, motion: { frames: number; scale: number } | null = null): void {
+    this.queued = { settings: JSON.parse(JSON.stringify(settings)), scale, includeDepth, motion };
     if (!this.rendering) void this.pump();
   }
 
@@ -84,7 +86,9 @@ export class StereoWorkerClient {
       try {
         const r = await this.call<Extract<WorkerResponse, { type: 'rendered' }>>({ type: 'render', id: this.nextId++, ...job });
         const img = (b: ArrayBuffer): RGBAImage => ({ width: r.eyeW, height: r.eyeH, data: new Uint8ClampedArray(b) });
-        this.onRender({ left: img(r.left), right: img(r.right), depth: r.depth ? img(r.depth) : null, info: r.info });
+        const m = r.motion;
+        const motion = m ? { hasDepth: m.hasDepth, frames: m.frames.map((b) => ({ width: m.width, height: m.height, data: new Uint8ClampedArray(b) })) } : null;
+        this.onRender({ left: img(r.left), right: img(r.right), depth: r.depth ? img(r.depth) : null, info: r.info, motion });
       } catch (e) {
         this.onError((e as Error).message);
       } finally {

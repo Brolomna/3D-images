@@ -50,6 +50,9 @@ export class PreviewRenderer {
   private wiggleTimer = 0;
   private wiggleMs = 140;
   private animateOutput = false;
+  private outputFrames: HTMLCanvasElement[] | null = null;
+  private animMs = 140;
+  private tick = 0;
   private hover: { x: number; y: number } | null = null;
   private drag: { kind: 'pan' | Handle; sx: number; sy: number; cx: number; cy: number; crop: CropRect | null } | null = null;
   private dpr = 1;
@@ -69,7 +72,13 @@ export class PreviewRenderer {
   }
 
   /** Upload newly rendered eye views + composed output (once per worker result). */
-  setViews(left: RGBAImage, right: RGBAImage, depth: RGBAImage | null, output: RGBAImage, animateOutput: boolean): void {
+  setViews(
+    left: RGBAImage,
+    right: RGBAImage,
+    depth: RGBAImage | null,
+    output: RGBAImage,
+    anim: { frames: RGBAImage[]; frameMs: number } | null,
+  ): void {
     const toCanvas = (img: RGBAImage, prev?: HTMLCanvasElement) => {
       const c = prev && prev.width === img.width && prev.height === img.height ? prev : makeCanvas(img.width, img.height);
       c.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
@@ -86,8 +95,15 @@ export class PreviewRenderer {
       leftData: new ImageData(left.data as Uint8ClampedArray<ArrayBuffer>, left.width, left.height),
       rightData: new ImageData(right.data as Uint8ClampedArray<ArrayBuffer>, right.width, right.height),
     };
-    this.animateOutput = animateOutput;
-    this.setWiggle(this.mode === 'wiggle' || (this.mode === 'sbs' && animateOutput));
+    if (anim) {
+      const prev = this.outputFrames ?? [];
+      this.outputFrames = anim.frames.map((img, i) => toCanvas(img, prev[i]));
+      this.animMs = anim.frameMs;
+    } else {
+      this.outputFrames = null;
+    }
+    this.animateOutput = !!anim;
+    this.setWiggle(this.mode === 'wiggle' || (this.mode === 'sbs' && this.animateOutput));
     this.drawThumbs();
     this.requestDraw();
   }
@@ -168,8 +184,9 @@ export class PreviewRenderer {
     if (on) {
       this.wiggleTimer = window.setInterval(() => {
         this.wiggleOn = !this.wiggleOn;
+        this.tick++;
         this.requestDraw();
-      }, this.wiggleMs);
+      }, this.mode === 'wiggle' ? this.wiggleMs : this.animMs);
     }
   }
 
@@ -185,7 +202,8 @@ export class PreviewRenderer {
     const f = this.frame;
     if (!f) return null;
     if (this.mode === 'sbs') {
-      if (this.animateOutput) return { w: f.eyeW, h: f.eyeH, panes: 1 };
+      const af = this.outputFrames?.[0];
+      if (this.animateOutput && af) return { w: af.width, h: af.height, panes: 1 };
       return { w: f.composite.width, h: f.composite.height, panes: 1 };
     }
     if (this.mode === 'compare') return { w: f.eyeW, h: f.eyeH, panes: 2 };
@@ -261,7 +279,8 @@ export class PreviewRenderer {
       this.drawCropOverlay(g, o.x, o.y, w * s, h * s);
     } else if (f) {
       if (this.mode === 'sbs') {
-        drawPane(this.animateOutput ? (this.wiggleOn ? f.right : f.left) : f.composite, 0);
+        const frames = this.outputFrames;
+        drawPane(this.animateOutput && frames?.length ? frames[this.tick % frames.length] : f.composite, 0);
       } else if (this.mode === 'compare') {
         const a = drawPane(f.left, 0);
         drawPane(f.right, view.areaW + view.gap);
@@ -534,7 +553,8 @@ export class PreviewRenderer {
     const f = this.frame;
     draw(this.thumbs.left, f?.left ?? null, f?.eyeW ?? 0, f?.eyeH ?? 0);
     draw(this.thumbs.right, f?.right ?? null, f?.eyeW ?? 0, f?.eyeH ?? 0);
-    draw(this.thumbs.sbs, f?.composite ?? null, f?.composite.width ?? 0, f?.composite.height ?? 0);
+    const thumb = this.animateOutput && this.outputFrames?.length ? this.outputFrames[0] : f?.composite ?? null;
+    draw(this.thumbs.sbs, thumb, thumb?.width ?? 0, thumb?.height ?? 0);
   }
 
   redrawThumbs() {

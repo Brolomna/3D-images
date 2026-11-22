@@ -1,6 +1,7 @@
 /** Shared settings model (UI ⇄ workers) and the primary default configuration. */
 import type { BackgroundSpec } from './background';
 import type { LayoutSpec, OutputSizeSpec, StereoFormat } from './layout';
+import type { MotionSettings } from './motion';
 import type { Interpolation } from './types';
 
 export type ShiftDirection = 1 | -1;
@@ -55,6 +56,8 @@ export interface StereoSettings {
   wiggleFrames: number;
   /** Milliseconds per frame. */
   wiggleFrameMs: number;
+  /** "3D photo" camera-motion animation. */
+  motion: MotionSettings;
   /** File type for still formats (sbs, half-sbs, ou, half-ou, anaglyph). */
   exportFormat: ImageFileFormat;
   /** 0..1 quality for JPEG / WEBP / MPO. */
@@ -89,6 +92,7 @@ export const DEFAULT_SETTINGS: StereoSettings = {
   wiggleFile: 'gif',
   wiggleFrames: 2,
   wiggleFrameMs: 140,
+  motion: { path: 'circle', amplitude: 20, durationMs: 3000, file: 'video' },
   exportFormat: 'png',
   exportQuality: 0.95,
 };

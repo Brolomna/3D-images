@@ -134,11 +134,22 @@ export interface DisparityParams {
   focus: number;
   /** −1 when the right eye is displaced (near → left), +1 for the left eye. */
   eyeSign: number;
+  /**
+   * Optional radial (zoom) parallax: extra displacement proportional to the
+   * distance from `center` (eye coordinates), reaching `radial` px at the edge.
+   */
+  radial?: number;
+  center?: number;
 }
 
-/** Per-pixel disparity: D = uniform + eyeSign · strength · (depth − focus). */
-export function disparityAt(d: number, p: DisparityParams): number {
-  return p.uniform + p.eyeSign * p.strength * (d - p.focus);
+/**
+ * Per-pixel disparity at eye coordinate x:
+ *   D = uniform + (depth − focus) · (eyeSign · strength + radial · (x − c) / c)
+ */
+export function disparityAt(d: number, p: DisparityParams, x = 0): number {
+  let k = p.eyeSign * p.strength;
+  if (p.radial && p.center) k += (p.radial * (x - p.center)) / p.center;
+  return p.uniform + k * (d - p.focus);
 }
 
 /**
@@ -154,6 +165,8 @@ export function warpHorizontal(
   params: DisparityParams,
   interpolation: Interpolation,
   hasAlpha: boolean,
+  /** Optional output (eyeW × height): depth carried along with the warp. */
+  outDepth?: Float32Array,
 ): RGBAImage {
   const Wb = base.width;
   const H = base.height;
@@ -171,7 +184,7 @@ export function warpHorizontal(
 
   for (let y = 0; y < H; y++) {
     const drow = y * Wb;
-    for (let s = 0; s < Wb; s++) dis[s] = s - marginX + disparityAt(depthFrame.data[drow + s], params);
+    for (let s = 0; s < Wb; s++) dis[s] = s - marginX + disparityAt(depthFrame.data[drow + s], params, s - marginX);
     zbuf.fill(-Infinity);
     ubuf.fill(NaN);
     for (let s = 0; s < Wb - 1; s++) {
@@ -179,11 +192,17 @@ export function warpHorizontal(
       if (!(t1 > t0)) continue; // fold: compressed / occluded region
       // A segment stretched over more than ~1.5 px spans a depth edge: leave
       // it as a hole so it is filled from the background, not smeared.
-      if (t1 - t0 > MAX_STRETCH) continue;
+      const d0 = depthFrame.data[drow + s], d1 = depthFrame.data[drow + s + 1];
+      if (t1 - t0 > MAX_STRETCH) {
+        // Keep the two edge samples themselves (no erosion of the object).
+        const xa = Math.round(t0), xb = Math.round(t1);
+        if (xa >= 0 && xa < eyeW && Math.abs(xa - t0) <= 0.5 && d0 > zbuf[xa]) { zbuf[xa] = d0; ubuf[xa] = s + (xa - t0); }
+        if (xb >= 0 && xb < eyeW && Math.abs(xb - t1) < 0.5 && d1 > zbuf[xb]) { zbuf[xb] = d1; ubuf[xb] = s + 1 + (xb - t1); }
+        continue;
+      }
       const xs = Math.max(0, Math.ceil(t0));
       const xe = Math.min(eyeW - 1, Math.ceil(t1) - 1);
       if (xe < xs) continue;
-      const d0 = depthFrame.data[drow + s], d1 = depthFrame.data[drow + s + 1];
       const inv = 1 / (t1 - t0);
       for (let x = xs; x <= xe; x++) {
         const a = (x - t0) * inv;
@@ -223,6 +242,11 @@ export function warpHorizontal(
     for (let k = 0; k < eyeW; k++) {
       const u = ubuf[k];
       const o = orow + k * 4;
+      if (outDepth) {
+        const uc = u < 0 ? 0 : u > Wb - 1 ? Wb - 1 : u;
+        const i0 = Math.floor(uc), i1 = Math.min(Wb - 1, i0 + 1);
+        outDepth[y * eyeW + k] = depthFrame.data[drow + i0] + (depthFrame.data[drow + i1] - depthFrame.data[drow + i0]) * (uc - i0);
+      }
       const ru = Math.round(u);
       if (R === 0 || Math.abs(u - ru) < 1e-7) {
         const p = row + clamp(R === 0 ? Math.floor(u + 0.5) : ru, Wb) * 4;
@@ -256,6 +280,40 @@ export function warpHorizontal(
     }
   }
   return out;
+}
+
+/** Transpose an RGBA image (rows ↔ columns). */
+export function transposeImage(img: RGBAImage): RGBAImage {
+  const { width: w, height: h } = img;
+  const out = createImage(h, w);
+  const s = new Uint32Array(img.data.buffer, img.data.byteOffset, w * h);
+  const d = new Uint32Array(out.data.buffer, out.data.byteOffset, w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[x * h + y] = s[y * w + x];
+  return out;
+}
+
+export function transposeDepth(map: DepthMap): DepthMap {
+  const { width: w, height: h } = map;
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[x * h + y] = map.data[y * w + x];
+  return { width: h, height: w, data: out };
+}
+
+/**
+ * Vertical depth-based warp (via transposition): out(x, y) = img(x, v(y)),
+ * output img.width × eyeH. Positive disparity moves content down.
+ */
+export function warpVertical(
+  img: RGBAImage,
+  depthFrame: DepthMap,
+  marginY: number,
+  eyeH: number,
+  params: DisparityParams,
+  interpolation: Interpolation,
+  hasAlpha: boolean,
+): RGBAImage {
+  const t = warpHorizontal(transposeImage(img), transposeDepth(depthFrame), marginY, eyeH, params, interpolation, hasAlpha);
+  return transposeImage(t);
 }
 
 function clamp(i: number, len: number): number {

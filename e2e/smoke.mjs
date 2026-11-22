@@ -100,6 +100,10 @@ async function exportFile(name) {
   await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 60000 });
   return { path, name: dl.suggestedFilename(), bytes: readFileSync(path) };
 }
+async function chooseStyle(format) {
+  await page.click(`.style-card[data-value="${format}"]`);
+  await waitRender();
+}
 async function setSelect(id, value) {
   await page.selectOption(id, value);
   await waitRender();
@@ -163,13 +167,13 @@ await page.fill('#h-offset-num', '14'); await page.dispatchEvent('#h-offset-num'
 await waitDepth();
 
 for (const [format, w, h] of [['half-sbs', 1080, 1920], ['ou', 1080, 1920], ['half-ou', 1080, 1920], ['anaglyph', 1080, 1920]]) {
-  await setSelect('#format', format);
+  await chooseStyle(format);
   const f = await exportFile();
   const png = decode(f.bytes);
   check(png.width === w && png.height === h && f.name.includes(format), `${format}: ${f.name} is ${png.width}×${png.height}`);
   await page.screenshot({ path: join(out, `format_${format}.png`) });
 }
-await setSelect('#format', 'mpo');
+await chooseStyle('mpo');
 {
   const f = await exportFile();
   const b = f.bytes;
@@ -178,7 +182,7 @@ await setSelect('#format', 'mpo');
   const hasMpf = b.includes(Buffer.from('MPF\0'));
   check(f.name.endsWith('.mpo') && starts.length >= 2 && hasMpf, `mpo: ${f.name} contains ${starts.length} JPEG images with MPF index`);
 }
-await setSelect('#format', 'wiggle');
+await chooseStyle('wiggle');
 await setSelect('#wiggle-frames', '6');
 {
   const f = await exportFile();
@@ -199,7 +203,32 @@ await waitRender();
     check(/WebCodecs|cannot encode/.test(res.err), `wiggle video unsupported in this browser build, clear message shown: "${res.err}"`);
   }
 }
-await setSelect('#format', 'sbs');
+// 3D photo motion (depth-driven camera animation): MP4 and GIF.
+await chooseStyle('motion');
+await page.waitForTimeout(600);
+await page.screenshot({ path: join(out, 'style_motion.png') });
+{
+  const f = await exportFile();
+  const isMp4 = f.bytes.subarray(4, 8).toString() === 'ftyp';
+  check(f.name.includes('motion') && (isMp4 || f.bytes.readUInt32BE(0) === 0x1a45dfa3), `motion video: ${f.name} (${(f.bytes.length / 1e6).toFixed(2)} MB)`);
+}
+await page.click('.seg[data-setting="motionPath"] button[data-value="zoom"]');
+await page.click('.seg[data-setting="motionFile"] button[data-value="gif"]');
+await waitRender();
+{
+  const f = await exportFile();
+  // Count GIF frames (graphic control extensions).
+  let frames = 0;
+  for (let i = 0; i < f.bytes.length - 2; i++) if (f.bytes[i] === 0x21 && f.bytes[i + 1] === 0xf9 && f.bytes[i + 2] === 0x04) frames++;
+  check(f.name.endsWith('.gif') && frames === 45, `motion GIF (zoom): ${f.name}, ${frames} frames`);
+}
+const thumbsDrawn = await page.evaluate(() => [...document.querySelectorAll('.style-card canvas')].every((c) => {
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true;
+  return false;
+}));
+check(thumbsDrawn, 'all 8 style cards show a live thumbnail');
+await chooseStyle('sbs');
 
 // ── 4. Batch → ZIP ──
 {

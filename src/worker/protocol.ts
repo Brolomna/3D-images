@@ -6,7 +6,11 @@ export interface RawDepth { width: number; height: number; buffer: ArrayBuffer }
 export type WorkerRequest =
   | { type: 'source'; id: number; width: number; height: number; buffer: ArrayBuffer }
   | { type: 'depth'; id: number; depth: RawDepth | null }
-  | { type: 'render'; id: number; settings: StereoSettings; scale: number; includeDepth: boolean }
+  | {
+    type: 'render'; id: number; settings: StereoSettings; scale: number; includeDepth: boolean;
+    /** For the motion style: number of preview frames and their render scale. */
+    motion: { frames: number; scale: number } | null;
+  }
   | {
     type: 'export';
     id: number;
@@ -35,6 +39,7 @@ export type WorkerResponse =
   | {
     type: 'rendered'; id: number; eyeW: number; eyeH: number;
     left: ArrayBuffer; right: ArrayBuffer; depth: ArrayBuffer | null; info: RenderInfo;
+    motion: { width: number; height: number; frames: ArrayBuffer[]; hasDepth: boolean } | null;
   }
   | { type: 'progress'; id: number; stage: string }
   | { type: 'exported'; id: number; blob: Blob; ext: string; width: number; height: number }

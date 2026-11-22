@@ -49,8 +49,9 @@ export interface OutputSizeSpec {
  *  anaglyph – single red/cyan image W × H
  *  wiggle   – animation alternating the eyes, W × H frames (GIF / video)
  *  mpo      – multi-picture JPEG with two W × H views (3D cameras / displays)
+ *  motion   – "3D photo": depth-driven camera-motion animation, W × H frames
  */
-export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo';
+export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo' | 'motion';
 
 export interface OutputSize {
   /** Final output file size (for wiggle / mpo: size of each frame / image). */
@@ -102,8 +103,9 @@ export function resolveOutputSize(spec: OutputSizeSpec, format: StereoFormat = '
   height = Math.max(1, height);
   // Even dimensions where the format splits or squeezes an axis by two, and
   // for video (H.264 / VP9 require even frame sizes).
-  if (format === 'sbs' || format === 'half-sbs' || format === 'wiggle') width = evenUp(width);
-  if (format === 'ou' || format === 'half-ou' || format === 'wiggle') height = evenUp(height);
+  const video = format === 'wiggle' || format === 'motion';
+  if (format === 'sbs' || format === 'half-sbs' || video) width = evenUp(width);
+  if (format === 'ou' || format === 'half-ou' || video) height = evenUp(height);
   return { width, height, eyeWidth: width / tileX, eyeHeight: height / tileY };
 }
 

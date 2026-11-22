@@ -16,9 +16,25 @@ function avcCodec(w: number, h: number): string {
 
 interface Candidate { container: 'mp4' | 'webm'; codec: string; muxCodec: string }
 
-export async function encodeWiggleVideo(frames: RGBAImage[], frameMs: number, minDurationMs = 3000): Promise<Blob> {
-  if (typeof VideoEncoder === 'undefined') throw new Error('Video export needs WebCodecs (recent Chrome, Edge, Safari or Firefox). Use GIF instead.');
+export function encodeWiggleVideo(frames: RGBAImage[], frameMs: number, minDurationMs = 3000): Promise<Blob> {
   const { width, height } = frames[0];
+  return encodeVideo(width, height, frameMs, frames.length, (i) => frames[i], minDurationMs);
+}
+
+/**
+ * Encode a looping clip from `count` frames produced on demand (repeated
+ * until at least `minDurationMs` long). Frames are encoded as they are made.
+ */
+export async function encodeVideo(
+  width: number,
+  height: number,
+  frameMs: number,
+  count: number,
+  getFrame: (i: number) => RGBAImage,
+  minDurationMs = 0,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Blob> {
+  if (typeof VideoEncoder === 'undefined') throw new Error('Video export needs WebCodecs (recent Chrome, Edge, Safari or Firefox). Use GIF instead.');
   const fps = 1000 / frameMs;
   const bitrate = Math.round(Math.min(40e6, Math.max(2e6, width * height * fps * 0.2)));
   const candidates: Candidate[] = [
@@ -49,16 +65,22 @@ export async function encodeWiggleVideo(frames: RGBAImage[], frameMs: number, mi
     error: (e) => { error = e as Error; },
   });
   encoder.configure(config);
-  const cycles = Math.max(1, Math.ceil(minDurationMs / (frames.length * frameMs)));
-  const durUs = Math.round(frameMs * 1000);
+  const cycles = Math.max(1, Math.ceil(minDurationMs / (count * frameMs)));
+  const total = cycles * count;
+  const keyEvery = Math.max(count, 30);
   let n = 0;
   for (let cyc = 0; cyc < cycles; cyc++) {
-    for (const f of frames) {
-      const vf = new VideoFrame(f.data, { format: 'RGBA', codedWidth: width, codedHeight: height, timestamp: n * durUs, duration: durUs });
-      encoder.encode(vf, { keyFrame: n % (frames.length * 4) === 0 });
+    for (let i = 0; i < count; i++) {
+      const f = getFrame(i);
+      if (f.width !== width || f.height !== height) throw new Error('Frame size mismatch');
+      const ts = Math.round(n * frameMs * 1000);
+      const dur = Math.round((n + 1) * frameMs * 1000) - ts;
+      const vf = new VideoFrame(f.data, { format: 'RGBA', codedWidth: width, codedHeight: height, timestamp: ts, duration: dur });
+      encoder.encode(vf, { keyFrame: n % keyEvery === 0 });
       vf.close();
       n++;
-      if (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 0));
+      onProgress?.(n, total);
+      while (encoder.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 0));
     }
   }
   await encoder.flush();

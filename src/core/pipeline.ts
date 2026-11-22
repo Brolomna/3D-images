@@ -13,6 +13,7 @@
 import { buildBackground } from './background';
 import { depthToImage, normalizeDepth, renderDepthFrame, smoothDepth, type DepthMap } from './depth';
 import { composeLayout } from './formats';
+import { renderMotionFrame } from './motion';
 import {
   computeMapping, resolveOutputSize, visibleSourceRect, zoomMapping,
   type CropRect, type Mapping, type OutputSize,
@@ -67,6 +68,17 @@ interface Prepared {
   renderScale: number;
   baseReused: boolean;
   depthUsed: boolean;
+  depthFrame: DepthMap | null;
+  motionAmp: number;
+}
+
+export interface MotionRenderer {
+  width: number;
+  height: number;
+  /** True when a depth map is available (otherwise frames are static). */
+  hasDepth: boolean;
+  /** Render the frame at loop phase t ∈ [0, 1). */
+  frame(t: number): RGBAImage;
 }
 
 export class StereoPipeline {
@@ -119,19 +131,24 @@ export class StereoPipeline {
     const syScale = eyeH / size.eyeHeight;
     const dx = off.dx * sxScale;
     const dy = off.dy * syScale;
-    const depthUsed = settings.depth.enabled && !!this.rawDepth && settings.depth.strength !== 0;
+    const motion = settings.format === 'motion';
+    const depthUsed = !motion && settings.depth.enabled && !!this.rawDepth && settings.depth.strength !== 0;
     const strength = depthUsed ? settings.depth.strength * sxScale : 0;
+    const farSide = Math.max(settings.depth.focus, 1 - settings.depth.focus);
+    // Motion parallax amplitude at this render scale (mono animation).
+    const motionAmp = motion && this.rawDepth ? Math.abs(settings.motion.amplitude) * sxScale : 0;
     // Largest possible |disparity| (depth term spans strength·max(focus, 1−focus)).
-    const maxD = Math.abs(dx) + strength * Math.max(settings.depth.focus, 1 - settings.depth.focus);
+    const maxD = Math.abs(dx) + strength * farSide + motionAmp * farSide;
+    const maxDy = Math.abs(dy) + motionAmp * farSide;
 
     let mapping = computeMapping(src.width, src.height, eyeW, eyeH, settings.layout);
-    if (settings.edgeMode === 'crop' && (maxD !== 0 || dy !== 0)) {
-      const z = Math.max(1 + (2 * Math.ceil(maxD)) / eyeW, 1 + (2 * Math.ceil(Math.abs(dy))) / eyeH);
+    if (settings.edgeMode === 'crop' && (maxD !== 0 || maxDy !== 0)) {
+      const z = Math.max(1 + (2 * Math.ceil(maxD)) / eyeW, 1 + (2 * Math.ceil(maxDy)) / eyeH);
       mapping = zoomMapping(mapping, z, eyeW, eyeH);
     }
 
     const needX = Math.ceil(maxD) + KERNEL_PAD;
-    const needY = Math.ceil(Math.abs(dy)) + KERNEL_PAD;
+    const needY = Math.ceil(maxDy) + KERNEL_PAD;
     const key = JSON.stringify({ eyeW, eyeH, mapping, interp: settings.resizeInterpolation, bg: settings.background });
 
     let reused = false;
@@ -165,7 +182,7 @@ export class StereoPipeline {
     const base = this.base!;
 
     let depth: ViewParams['depth'] = null;
-    if (depthUsed || (settings.depth.enabled && this.rawDepth)) {
+    if (this.rawDepth && (depthUsed || settings.depth.enabled || motion)) {
       const dKey = JSON.stringify({ key, mx: base.marginX, my: base.marginY, id: this.depthId, s: settings.depth.smoothing, inv: settings.depth.invert });
       if (!this.depthFrame || this.depthKey !== dKey) {
         const norm = normalizeDepth(this.rawDepth!, settings.depth.invert);
@@ -181,8 +198,13 @@ export class StereoPipeline {
         eyeSign: settings.shiftedEye === 'right' ? -1 : 1,
       };
     }
-    const params: ViewParams = { dx, dy, interpolation: settings.shiftInterpolation, depth };
-    return { size, base, params, dx, dy, mapping, renderScale: eyeW / size.eyeWidth, baseReused: reused, depthUsed };
+    const params: ViewParams = motion
+      ? { dx: 0, dy: 0, interpolation: settings.shiftInterpolation, depth: null }
+      : { dx, dy, interpolation: settings.shiftInterpolation, depth };
+    return {
+      size, base, params, dx: motion ? 0 : dx, dy: motion ? 0 : dy, mapping, renderScale: eyeW / size.eyeWidth,
+      baseReused: reused, depthUsed: depthUsed || (motion && !!depth), depthFrame: depth?.frame ?? null, motionAmp,
+    };
   }
 
   /** Render at `renderScale` × full resolution (1 = export resolution). */
@@ -216,6 +238,20 @@ export class StereoPipeline {
       visible: visibleSourceRect(p.mapping, src.width, src.height, p.base.eyeW, p.base.eyeH),
       baseReused: p.baseReused,
       timings: { base: t1 - t0, views: t2 - t1, compose: t3 - t2 },
+    };
+  }
+
+  /** Frame source for the "3D photo" motion animation (format 'motion'). */
+  motionRenderer(settings: StereoSettings, renderScale = 1): MotionRenderer {
+    const s = settings.format === 'motion' ? settings : { ...settings, format: 'motion' as const };
+    const p = this.prepare(s, renderScale);
+    const { focus } = s.depth;
+    const { path } = s.motion;
+    return {
+      width: p.base.eyeW,
+      height: p.base.eyeH,
+      hasDepth: !!p.depthFrame,
+      frame: (t: number) => renderMotionFrame(p.base, p.depthFrame, focus, path, p.motionAmp, t, s.shiftInterpolation),
     };
   }
 

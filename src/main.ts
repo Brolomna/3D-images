@@ -11,7 +11,8 @@ import {
   cloneSettings, DEFAULT_SETTINGS, effectiveOffsets,
   type AnaglyphMethod, type StereoSettings,
 } from './core/settings';
-import type { Interpolation } from './core/types';
+import { motionTiming, type MotionPath } from './core/motion';
+import type { Interpolation, RGBAImage } from './core/types';
 import { DepthClient, type DepthProgress } from './depth/client';
 import { ACCEPT_ATTR, createSampleImage, importFile, type ImportedImage } from './io/import';
 import { PreviewRenderer, type ViewMode } from './ui/preview';
@@ -22,6 +23,9 @@ import type { RenderInfo } from './worker/protocol';
 const STORAGE_KEY = 'stereo3d.settings.v2';
 /** Max pixels per eye rendered for the live preview; export is always full resolution. */
 const PREVIEW_MAX_EYE_PIXELS = 2_300_000;
+/** Motion-style preview: frames per loop and max pixels per frame. */
+const MOTION_PREVIEW_FRAMES = 24;
+const MOTION_PREVIEW_PIXELS = 320_000;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -56,6 +60,12 @@ type DepthState =
   | { kind: 'ready'; map: DepthMap; ms: number }
   | { kind: 'error'; message: string };
 let depthState: DepthState = { kind: 'none' };
+let lastMotionFrame: RGBAImage | null = null;
+
+/** Depth is needed for depth-based stereo and always for the motion style. */
+function depthWanted(s = settings): boolean {
+  return s.depth.enabled || s.format === 'motion';
+}
 let imageToken = 0;
 
 // ───────────────────────── services ─────────────────────────
@@ -69,13 +79,17 @@ const preview = new PreviewRenderer($('stage'), $<HTMLCanvasElement>('stage-canv
   sbs: $<HTMLCanvasElement>('thumb-sbs'),
 });
 
-worker.onRender = ({ left, right, depth, info }) => {
+worker.onRender = ({ left, right, depth, info, motion }) => {
   lastInfo = info;
-  const animate = settings.format === 'wiggle';
   // Compose the selected format with the same code the exporter uses.
   const output = composeLayout(left, right, settings.format, settings.arrangement, settings.anaglyphMethod, settings.resizeInterpolation);
+  let anim: { frames: RGBAImage[]; frameMs: number } | null = null;
+  if (settings.format === 'wiggle') anim = { frames: [left, right], frameMs: settings.wiggleFrameMs };
+  else if (settings.format === 'motion' && motion) anim = { frames: motion.frames, frameMs: settings.motion.durationMs / motion.frames.length };
+  lastMotionFrame = motion?.frames[0] ?? null;
   preview.setWiggleSpeed(settings.wiggleFrameMs);
-  preview.setViews(left, right, depth, output, animate);
+  preview.setViews(left, right, depth, output, anim);
+  updateStyleThumbs(left, right);
   preview.setCropState(info.visible, settings.layout.fit === 'manual', settings.layout.crop, eyeAspect());
   setBusy(false);
   updateStatus();
@@ -102,7 +116,7 @@ preview.onCropReset = () => {
 
 /** Start (or reuse) depth estimation for the current image. */
 function ensureDepth(): Promise<DepthMap | null> {
-  if (!current || !settings.depth.enabled) return Promise.resolve(null);
+  if (!current || !depthWanted()) return Promise.resolve(null);
   if (depthState.kind === 'ready') return Promise.resolve(depthState.map);
   if (depthState.kind === 'running') return depthState.promise;
   const token = imageToken;
@@ -123,7 +137,7 @@ function ensureDepth(): Promise<DepthMap | null> {
     if (token !== imageToken) return null;
     depthState = { kind: 'error', message: e.message };
     syncDepthStatus();
-    toast(`Depth analysis failed: ${e.message}. Using the uniform shift.`, true);
+    toast(`Depth analysis failed: ${e.message}. ${settings.format === 'motion' ? 'The 3D photo motion needs depth.' : 'Using the uniform shift.'}`, true);
     return null;
   });
   depthState = { kind: 'running', progress: null, promise };
@@ -134,7 +148,7 @@ function ensureDepth(): Promise<DepthMap | null> {
 function syncDepthStatus() {
   const el = $('depth-status');
   el.className = 'depth-status';
-  const on = settings.depth.enabled;
+  const on = depthWanted();
   if (!on) {
     el.textContent = 'Off — uniform shift only';
     return;
@@ -187,7 +201,13 @@ function previewScale(): number {
 let busyTimer = 0;
 function scheduleRender() {
   if (!current) return;
-  worker.requestRender(settings, previewScale(), preview.mode === 'depth');
+  let motion: { frames: number; scale: number } | null = null;
+  if (settings.format === 'motion') {
+    const s = outputSize();
+    const cap = Math.sqrt(MOTION_PREVIEW_PIXELS / (s.eyeWidth * s.eyeHeight));
+    motion = { frames: MOTION_PREVIEW_FRAMES, scale: Math.min(previewScale(), cap) };
+  }
+  worker.requestRender(settings, previewScale(), preview.mode === 'depth', motion);
   // Only show the spinner for slow renders, avoiding flicker during drags.
   clearTimeout(busyTimer);
   busyTimer = window.setTimeout(() => setBusy(true, 'Processing…'), 180);
@@ -215,7 +235,7 @@ function commit() {
   syncUI();
   saveSettings();
   updateHash();
-  if (settings.depth.enabled && current) void ensureDepth();
+  if (depthWanted() && current) void ensureDepth();
   scheduleRender();
 }
 
@@ -254,8 +274,59 @@ function fmt(n: number, d = 2) {
 
 const FORMAT_LABEL: Record<StereoFormat, string> = {
   sbs: 'Side-by-side', 'half-sbs': 'Half side-by-side', ou: 'Over/under', 'half-ou': 'Half over/under',
-  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO',
+  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion',
 };
+
+// ───────────────────────── 3D style picker ─────────────────────────
+
+/** Downscale an RGBA image to a small canvas-backed RGBA (for style thumbnails). */
+function shrink(img: RGBAImage, maxH: number): RGBAImage {
+  const s = Math.min(1, maxH / img.height);
+  const w = Math.max(2, Math.round(img.width * s)), h = Math.max(2, Math.round(img.height * s));
+  const src = new OffscreenCanvas(img.width, img.height);
+  src.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
+  const dst = new OffscreenCanvas(w, h);
+  const g = dst.getContext('2d', { willReadFrequently: true })!;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(src, 0, 0, w, h);
+  return { width: w, height: h, data: g.getImageData(0, 0, w, h).data };
+}
+
+let thumbTimer = 0;
+/** Live thumbnails of the photo in every 3D style (throttled). */
+function updateStyleThumbs(left: RGBAImage, right: RGBAImage) {
+  clearTimeout(thumbTimer);
+  thumbTimer = window.setTimeout(() => {
+    const l = shrink(left, 120), r = shrink(right, 120);
+    document.querySelectorAll<HTMLButtonElement>('.style-card').forEach((card) => {
+      const f = card.dataset.value as StereoFormat;
+      let img: RGBAImage;
+      if (f === 'wiggle') img = l;
+      else if (f === 'motion') img = lastMotionFrame ? shrink(lastMotionFrame, 120) : l;
+      else img = composeLayout(l, r, f === 'mpo' ? 'sbs' : f, settings.arrangement, settings.anaglyphMethod, 'bilinear');
+      const c = card.querySelector('canvas')!;
+      const g = c.getContext('2d')!;
+      g.clearRect(0, 0, c.width, c.height);
+      // Contain-fit the composed style into the card.
+      const tmp = new OffscreenCanvas(img.width, img.height);
+      tmp.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
+      const k = Math.min(c.width / img.width, c.height / img.height);
+      const w = img.width * k, h = img.height * k;
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(tmp, (c.width - w) / 2, (c.height - h) / 2, w, h);
+      if (f === 'wiggle' || f === 'motion' || f === 'mpo') {
+        g.font = '600 15px system-ui, sans-serif';
+        const tag = f === 'wiggle' ? 'L ⇄ R' : f === 'motion' ? '▶ motion' : '2 JPEGs';
+        const tw = g.measureText(tag).width + 12;
+        g.fillStyle = 'rgba(14,15,18,0.85)';
+        g.fillRect(c.width - tw - 6, c.height - 26, tw, 20);
+        g.fillStyle = '#e7e9ee';
+        g.textBaseline = 'middle';
+        g.fillText(tag, c.width - tw, c.height - 16);
+      }
+    });
+  }, 250);
+}
 
 function syncUI() {
   const s = settings;
@@ -278,7 +349,7 @@ function syncUI() {
   $<HTMLInputElement>('custom-h').value = String(s.output.customHeight);
 
   const size = outputSize();
-  const multi = s.format === 'wiggle' ? 'Each frame' : s.format === 'mpo' ? 'Each image' : 'Output';
+  const multi = s.format === 'wiggle' || s.format === 'motion' ? 'Each frame' : s.format === 'mpo' ? 'Each image' : 'Output';
   $('size-readout').innerHTML = `${multi} <b>${size.width} × ${size.height}</b> px<br>Each eye <b>${size.eyeWidth} × ${size.eyeHeight}</b> px`
     + (s.format === 'half-sbs' || s.format === 'half-ou' ? ' (squeezed ×½)' : '');
 
@@ -339,9 +410,16 @@ function syncUI() {
   $<HTMLSelectElement>('resize-interp').value = s.resizeInterpolation;
   $<HTMLSelectElement>('shift-interp').value = s.shiftInterpolation;
 
-  // Export
-  const still = s.format !== 'wiggle' && s.format !== 'mpo';
-  $<HTMLSelectElement>('format').value = s.format;
+  // 3D style + export
+  const still = s.format !== 'wiggle' && s.format !== 'mpo' && s.format !== 'motion';
+  document.querySelectorAll<HTMLElement>('.style-card').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.value === s.format)));
+  setSeg('motionPath', s.motion.path);
+  setSeg('motionFile', s.motion.file);
+  $('motion-options').classList.toggle('hidden', s.format !== 'motion');
+  $<HTMLInputElement>('motion-amount').value = String(s.motion.amplitude);
+  $('motion-amount-out').textContent = `${s.motion.amplitude} px`;
+  $<HTMLInputElement>('motion-duration').value = String(s.motion.durationMs);
+  $('motion-duration-out').textContent = `${fmt(s.motion.durationMs / 1000, 2)} s`;
   $('still-options').classList.toggle('hidden', !still);
   $('anaglyph-field').classList.toggle('hidden', s.format !== 'anaglyph');
   $<HTMLSelectElement>('anaglyph-method').value = s.anaglyphMethod;
@@ -353,9 +431,12 @@ function syncUI() {
   $('quality-field').classList.toggle('hidden', !lossy);
   $<HTMLInputElement>('quality').value = String(s.exportQuality);
   $('quality-out').textContent = `${Math.round(s.exportQuality * 100)}%`;
+  const timing = motionTiming(s.motion);
   const detail = s.format === 'wiggle'
     ? `${s.wiggleFrames} frames · ${s.wiggleFrameMs} ms${s.wiggleFile === 'video' ? ' · ≥3 s loop' : ''}`
-    : lossy ? `quality ${Math.round(s.exportQuality * 100)}%` : 'lossless';
+    : s.format === 'motion'
+      ? `${timing.count} frames · ${fmt(s.motion.durationMs / 1000, 2)} s loop · ${s.motion.file === 'gif' ? 'GIF' : 'MP4'}`
+      : lossy ? `quality ${Math.round(s.exportQuality * 100)}%` : 'lossless';
   $('export-readout').innerHTML = `<b>${exportName()}</b><br>${FORMAT_LABEL[s.format]} · ${size.width} × ${size.height} · ${detail}`;
 
   const has = !!current;
@@ -379,6 +460,7 @@ function syncUI() {
 
 function fileExt(s: StereoSettings): string {
   if (s.format === 'wiggle') return s.wiggleFile === 'gif' ? 'gif' : 'mp4';
+  if (s.format === 'motion') return s.motion.file === 'gif' ? 'gif' : 'mp4';
   if (s.format === 'mpo') return 'mpo';
   return s.exportFormat === 'jpeg' ? 'jpg' : s.exportFormat;
 }
@@ -401,7 +483,7 @@ function updateStatus() {
   }
   const pct = Math.round(i.renderScale * 1000) / 10;
   const res = pct >= 100 ? 'full resolution' : `${pct}% scale (export is full resolution)`;
-  const depth = i.depthUsed ? 'depth on' : settings.depth.enabled ? 'depth pending' : 'uniform';
+  const depth = i.depthUsed ? 'depth on' : depthWanted() ? 'depth pending' : 'uniform';
   $('status').textContent = `Preview ${res} · ${depth} · Δx ${fmt(i.dx, 3)} px · Δy ${fmt(i.dy, 3)} px · ${i.baseReused ? 'frame cached' : 'frame rebuilt'} · ${Math.round(i.ms)} ms`;
 }
 
@@ -453,7 +535,7 @@ async function doExport() {
   exporting = true;
   syncUI();
   try {
-    if (settings.depth.enabled && depthState.kind !== 'ready' && depthState.kind !== 'error') {
+    if (depthWanted() && depthState.kind !== 'ready' && depthState.kind !== 'error') {
       setBusy(true, 'Waiting for depth analysis…');
       await ensureDepth();
     }
@@ -494,7 +576,7 @@ async function runBatch(files: File[]) {
       const img = await importFile(files[i]);
       img.bitmap.close();
       let depth: DepthMap | null = null;
-      if (s.depth.enabled) {
+      if (depthWanted(s)) {
         status('analysing depth');
         depth = await depthClient.estimate(img.image, (p) => status(p.total ? `${p.stage} ${Math.round((100 * (p.loaded ?? 0)) / p.total)}%` : p.stage.toLowerCase()));
       }
@@ -665,10 +747,17 @@ function bindAll() {
   });
   onSelect('resize-interp', (v) => { settings.resizeInterpolation = v as Interpolation; });
   onSelect('shift-interp', (v) => { settings.shiftInterpolation = v as Interpolation; });
-  onSelect('format', (v) => {
-    settings.format = v as StereoFormat;
-    if (preview.mode !== 'sbs' && preview.mode !== 'crop') preview.setMode('sbs');
+  document.querySelectorAll<HTMLButtonElement>('.style-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      settings.format = card.dataset.value as StereoFormat;
+      if (preview.mode !== 'sbs' && preview.mode !== 'crop') preview.setMode('sbs');
+      commit();
+    });
   });
+  bindSeg('motionPath', (v) => { settings.motion.path = v as MotionPath; });
+  bindSeg('motionFile', (v) => { settings.motion.file = v as 'video' | 'gif'; });
+  onInput('motion-amount', (el) => { settings.motion.amplitude = num(el, 20); });
+  onInput('motion-duration', (el) => { settings.motion.durationMs = num(el, 3000); });
   onSelect('anaglyph-method', (v) => { settings.anaglyphMethod = v as AnaglyphMethod; });
   onSelect('wiggle-frames', (v) => { settings.wiggleFrames = Number(v) || 2; });
   onInput('wiggle-ms', (el) => { settings.wiggleFrameMs = num(el, 140); });

@@ -6,14 +6,15 @@
  */
 import type { DepthMap } from '../core/depth';
 import { encodePNG } from '../core/encode';
-import { encodeGif } from '../core/gif';
+import { buildPalette, encodeGif, encodeGifStream } from '../core/gif';
+import { motionTiming } from '../core/motion';
 import { resolveOutputSize } from '../core/layout';
 import { assembleMPO } from '../core/mpo';
 import { StereoPipeline } from '../core/pipeline';
 import type { StereoSettings } from '../core/settings';
 import type { RGBAImage } from '../core/types';
 import type { RawDepth, WorkerRequest, WorkerResponse } from './protocol';
-import { encodeWiggleVideo } from './video';
+import { encodeVideo, encodeWiggleVideo } from './video';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const preview = new StereoPipeline();
@@ -47,14 +48,25 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const left = r.left.data.buffer as ArrayBuffer;
       const right = (r.right === r.left ? r.right.data.slice() : r.right.data).buffer as ArrayBuffer;
       const dbuf = r.depth ? (r.depth.data.buffer as ArrayBuffer) : null;
+      let motion: { width: number; height: number; frames: ArrayBuffer[]; hasDepth: boolean } | null = null;
+      if (msg.motion && msg.settings.format === 'motion') {
+        const m = preview.motionRenderer(msg.settings, msg.motion.scale);
+        const n = Math.max(2, msg.motion.frames);
+        const frames = m.hasDepth
+          ? Array.from({ length: n }, (_, i) => m.frame(i / n).data.buffer as ArrayBuffer)
+          : [m.frame(0).data.buffer as ArrayBuffer];
+        motion = { width: m.width, height: m.height, frames, hasDepth: m.hasDepth };
+      }
+      const transfer: Transferable[] = [left, right, ...(dbuf ? [dbuf] : []), ...(motion?.frames ?? [])];
       post({
+        motion,
         type: 'rendered', id: msg.id, eyeW: r.left.width, eyeH: r.left.height, left, right, depth: dbuf,
         info: {
           fullWidth: r.size.width, fullHeight: r.size.height, eyeWidth: r.size.eyeWidth, eyeHeight: r.size.eyeHeight,
           renderScale: r.renderScale, dx: r.dx, dy: r.dy, depthUsed: r.depthUsed, visible: r.visible,
           baseReused: r.baseReused, ms: performance.now() - t0, timings: r.timings,
         },
-      }, dbuf ? [left, right, dbuf] : [left, right]);
+      }, transfer);
     } else if (msg.type === 'export') {
       let pipeline: StereoPipeline;
       if (msg.item) {
@@ -92,6 +104,24 @@ async function encodeCanvas(img: RGBAImage, type: 'image/jpeg' | 'image/webp', q
 async function exportFormat(p: StereoPipeline, s: StereoSettings, progress: (s: string) => void) {
   const size = resolveOutputSize(s.output, s.format);
   progress('Rendering full resolution…');
+  if (s.format === 'motion') {
+    const m = p.motionRenderer(s, 1);
+    if (!m.hasDepth) throw new Error('The 3D photo motion needs the depth map, which is not available yet.');
+    const { count, frameMs } = motionTiming(s.motion);
+    const pct = (i: number) => `${Math.round((100 * i) / count)}%`;
+    if (s.motion.file === 'gif') {
+      progress('Building colour palette…');
+      const palette = buildPalette([0, 0.25, 0.5, 0.75].map((t) => m.frame(t)));
+      const bytes = encodeGifStream(count, (i) => m.frame(i / count), frameMs, palette, (i) => {
+        if (i % 3 === 0) progress(`Encoding GIF ${pct(i + 1)}…`);
+      });
+      return { blob: new Blob([bytes as BlobPart], { type: 'image/gif' }), ext: 'gif', width: m.width, height: m.height };
+    }
+    const blob = await encodeVideo(m.width, m.height, frameMs, count, (i) => m.frame(i / count), 0, (done, total) => {
+      if (done % 3 === 0) progress(`Rendering video ${Math.round((100 * done) / total)}%…`);
+    });
+    return { blob, ext: blob.type === 'video/mp4' ? 'mp4' : 'webm', width: m.width, height: m.height };
+  }
   if (s.format === 'wiggle') {
     const frames = p.renderWiggleFrames(s, s.wiggleFrames, 1);
     if (s.wiggleFile === 'gif') {

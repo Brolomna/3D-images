@@ -161,6 +161,52 @@
     <!-- RIGHT PANEL: stereo + export -->
     <aside class="panel panel-right" aria-label="Stereo and export">
       <section class="group">
+        <h2>Choose 3D style</h2>
+        <div id="style-grid" class="style-grid" role="radiogroup" aria-label="3D style">
+          <button class="style-card" data-value="sbs" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Side-by-side</span>
+            <span class="style-need">Free-viewing or a phone VR viewer</span>
+          </button>
+          <button class="style-card" data-value="anaglyph" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Red / cyan</span>
+            <span class="style-need">Red/cyan 3D glasses</span>
+          </button>
+          <button class="style-card" data-value="motion" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">3D photo motion</span>
+            <span class="style-need">No glasses · parallax video</span>
+          </button>
+          <button class="style-card" data-value="wiggle" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Wiggle</span>
+            <span class="style-need">No glasses · flicker animation</span>
+          </button>
+          <button class="style-card" data-value="half-sbs" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">3D TV / VR</span>
+            <span class="style-need">Half side-by-side</span>
+          </button>
+          <button class="style-card" data-value="ou" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Over / under</span>
+            <span class="style-need">Projectors, VR players</span>
+          </button>
+          <button class="style-card" data-value="half-ou" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Half over / under</span>
+            <span class="style-need">3D TVs (top-bottom)</span>
+          </button>
+          <button class="style-card" data-value="mpo" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">MPO</span>
+            <span class="style-need">3D cameras, 3DS, 3D displays</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="group">
         <h2 class="with-toggle">Automatic depth
           <label class="switch"><input id="depth-enabled" type="checkbox" /><span></span><em>On</em></label>
         </h2>
@@ -257,17 +303,6 @@
 
       <section class="group">
         <h2>Export</h2>
-        <label class="field"><span>Stereo format</span>
-          <select id="format">
-            <option value="sbs">Side-by-side (full)</option>
-            <option value="half-sbs">Half side-by-side (3D TV / VR)</option>
-            <option value="ou">Over / under</option>
-            <option value="half-ou">Half over / under</option>
-            <option value="anaglyph">Anaglyph (red / cyan)</option>
-            <option value="wiggle">Wiggle animation (GIF / video)</option>
-            <option value="mpo">MPO (3D camera / display)</option>
-          </select>
-        </label>
         <div id="still-options">
           <div class="seg small" data-setting="exportFormat" role="radiogroup" aria-label="Image file type">
             <button data-value="png">PNG</button>
@@ -298,6 +333,26 @@
           <label class="slider"><span>Frame time <output id="wiggle-ms-out"></output></span>
             <input id="wiggle-ms" type="range" min="40" max="400" step="10" />
           </label>
+        </div>
+        <div id="motion-options" class="stack hidden">
+          <span class="label">Camera movement</span>
+          <div class="seg small" data-setting="motionPath" role="radiogroup" aria-label="Camera movement">
+            <button data-value="circle" title="Camera circles gently">Circle</button>
+            <button data-value="horizontal" title="Sway left and right">↔ Sway</button>
+            <button data-value="vertical" title="Sway up and down">↕ Sway</button>
+            <button data-value="zoom" title="Push in and out">Zoom</button>
+          </div>
+          <label class="slider"><span>Movement amount <output id="motion-amount-out"></output></span>
+            <input id="motion-amount" type="range" min="4" max="60" step="1" />
+          </label>
+          <label class="slider"><span>Loop length <output id="motion-duration-out"></output></span>
+            <input id="motion-duration" type="range" min="1500" max="8000" step="250" />
+          </label>
+          <div class="seg small" data-setting="motionFile" role="radiogroup" aria-label="Animation file type">
+            <button data-value="video">Video (MP4)</button>
+            <button data-value="gif">GIF</button>
+          </div>
+          <p class="hint">Uses the depth map: near parts move more than far parts. The depth panel's focus plane sets which depth stays still.</p>
         </div>
         <label id="quality-field" class="slider hidden"><span>Quality <output id="quality-out"></output></span>
           <input id="quality" type="range" min="0.5" max="1" step="0.01" />

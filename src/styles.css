@@ -241,3 +241,18 @@ input[type='range'] { width: 100%; accent-color: var(--accent); height: 22px; ma
 .batch-list li.done { color: #7bd88f; }
 .batch-list li.fail { color: var(--danger); }
 .batch-list li.active { color: var(--text); }
+
+/* 3D style picker */
+.style-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.style-card {
+  display: grid; gap: 2px; padding: 6px; text-align: left; cursor: pointer; border-radius: 8px;
+  border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); min-width: 0;
+}
+.style-card:hover { border-color: #4a5160; }
+.style-card[aria-checked='true'] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: rgba(79, 140, 255, 0.08); }
+.style-thumb { width: 100%; aspect-ratio: 5 / 3; height: auto; border-radius: 5px; background: #0b0c0f; display: block; margin-bottom: 4px; }
+.style-name { font-size: 12px; font-weight: 600; }
+.style-need { font-size: 11px; color: var(--dim); line-height: 1.3; }
+@media (max-width: 900px) {
+  .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
