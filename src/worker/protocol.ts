@@ -42,7 +42,7 @@ export type WorkerResponse =
     left: ArrayBuffer; right: ArrayBuffer; depth: ArrayBuffer | null; info: RenderInfo;
     motion: { width: number; height: number; frames: ArrayBuffer[]; hasDepth: boolean } | null;
     /** Finished single image for the stereogram style. */
-    special: { width: number; height: number; buffer: ArrayBuffer; hasDepth: boolean } | null;
+    special: { width: number; height: number; buffer: ArrayBuffer; hasDepth: boolean; sketch: ArrayBuffer | null } | null;
   }
   | { type: 'progress'; id: number; stage: string }
   | { type: 'exported'; id: number; blob: Blob; ext: string; width: number; height: number }

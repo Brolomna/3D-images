@@ -9,7 +9,7 @@
 import type { CropRect } from '../core/layout';
 import type { RGBAImage } from '../core/types';
 
-export type ViewMode = 'sbs' | 'compare' | 'wiggle' | 'diff' | 'anaglyph' | 'depth' | 'crop';
+export type ViewMode = 'sbs' | 'compare' | 'wiggle' | 'diff' | 'anaglyph' | 'depth' | 'sketch' | 'crop';
 
 interface Frame {
   composite: HTMLCanvasElement;
@@ -50,6 +50,7 @@ export class PreviewRenderer {
   private wiggleTimer = 0;
   private wiggleMs = 140;
   private animateOutput = false;
+  private sketch: HTMLCanvasElement | null = null;
   private outputFrames: HTMLCanvasElement[] | null = null;
   private animMs = 140;
   private tick = 0;
@@ -105,6 +106,15 @@ export class PreviewRenderer {
     this.animateOutput = !!anim;
     this.setWiggle(this.mode === 'wiggle' || (this.mode === 'sbs' && this.animateOutput));
     this.drawThumbs();
+    this.requestDraw();
+  }
+
+  /** Coloured stereogram sketch (or null when not in that style). */
+  setSketch(img: RGBAImage | null): void {
+    if (!img) { this.sketch = null; return; }
+    const c = this.sketch && this.sketch.width === img.width && this.sketch.height === img.height ? this.sketch : makeCanvas(img.width, img.height);
+    c.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
+    this.sketch = c;
     this.requestDraw();
   }
 
@@ -304,6 +314,9 @@ export class PreviewRenderer {
       } else if (this.mode === 'wiggle') {
         drawPane(this.wiggleOn ? f.right : f.left, 0);
         this.label(g, this.wiggleOn ? 'R' : 'L', 8, 8, this.wiggleOn ? '#40d0ff' : '#ff5d5d');
+      } else if (this.mode === 'sketch') {
+        if (this.sketch) drawPane(this.sketch, 0);
+        else this.message(g, rect.width, rect.height, 'Choose the Stereogram style with the Sketch shape to see its sketch');
       } else if (this.mode === 'depth') {
         if (f.depth) drawPane(f.depth, 0);
         else this.message(g, rect.width, rect.height, 'Depth is off or still being analysed');

@@ -15,6 +15,7 @@ import { applyDepthContrast, depthToImage, normalizeDepth, renderDepthFrame, smo
 import { composeLayout } from './formats';
 import { renderMotionFrame } from './motion';
 import { buildTexture, generateAutostereogram, patternWidth, shapeDepth } from './autostereogram';
+import { buildSketch } from './sketch';
 import {
   computeMapping, resolveOutputSize, visibleSourceRect, zoomMapping,
   type CropRect, type Mapping, type OutputSize,
@@ -254,17 +255,26 @@ export class StereoPipeline {
    * Hidden-3D autostereogram of the current photo: its depth map is the
    * hidden shape. Returns null-depth flag when no depth map is available yet.
    */
-  renderStereogram(settings: StereoSettings, renderScale = 1): { image: RGBAImage; hasDepth: boolean; depth: RGBAImage | null } {
+  renderStereogram(settings: StereoSettings, renderScale = 1): { image: RGBAImage; hasDepth: boolean; depth: RGBAImage | null; sketch: RGBAImage | null } {
     const s = settings.format === 'stereogram' ? settings : { ...settings, format: 'stereogram' as const };
     const p = this.prepare(s, renderScale);
     const { eyeW, eyeH, marginX, marginY } = p.base;
     const flat: DepthMap = { width: eyeW, height: eyeH, data: new Float32Array(eyeW * eyeH) };
     let shape = flat;
+    let sketch: RGBAImage | null = null;
     if (p.depthFrame) {
       const f = p.depthFrame;
       const crop = new Float32Array(eyeW * eyeH);
       for (let y = 0; y < eyeH; y++) crop.set(f.data.subarray((y + marginY) * f.width + marginX, (y + marginY) * f.width + marginX + eyeW), y * eyeW);
-      shape = shapeDepth({ width: eyeW, height: eyeH, data: crop }, s.stereogram);
+      const cropped = { width: eyeW, height: eyeH, data: crop };
+      if (s.stereogram.shape === 'sketch') {
+        // Photo → coloured line sketch → hidden 3D shape.
+        const sk = buildSketch(generateReferenceView(p.base), cropped, s.stereogram.sketch.subject ?? 0, s.stereogram.sketch, p.renderScale);
+        shape = sk.depth;
+        sketch = sk.image;
+      } else {
+        shape = shapeDepth(cropped, s.stereogram);
+      }
     }
     const P = patternWidth(eyeW, s.stereogram);
     const photo = s.stereogram.pattern === 'photo' ? generateReferenceView(p.base) : null;
@@ -273,6 +283,7 @@ export class StereoPipeline {
       image: generateAutostereogram(shape, texture, s.stereogram),
       hasDepth: !!p.depthFrame,
       depth: p.depthFrame ? depthToImage(shape) : null,
+      sketch,
     };
   }
 

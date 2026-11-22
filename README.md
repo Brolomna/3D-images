@@ -12,7 +12,7 @@ The app **estimates the photo's depth itself**. Near parts of the scene get more
 
 The photo styles add no patterns, shadows or depth overlays, and they generate no new image content. Every output pixel is resampled from the original photo, and the depth model only decides how far each pixel moves.
 
-The one deliberate exception is the separate **Hidden 3D (Magic Eye)** style. It hides the photo's depth inside a repeating texture, which is how autostereograms work.
+The one deliberate exception is the separate **Stereogram** style. It hides the photo's depth inside a repeating texture, which is how autostereograms work.
 
 Everything runs in the browser. Photos never leave your device.
 
@@ -82,12 +82,12 @@ The **Choose 3D style** panel shows live thumbnails of *your* photo in every sty
 | Anaglyph | Red/cyan; Dubois (default), half-colour, full-colour or grey |
 | Wiggle | Animated GIF or video (MP4/H.264, WebM fallback). Classic 2-frame flip or a smooth 6/12-frame sweep, adjustable speed |
 | MPO | Multi-Picture JPEG with a left + right pair (CIPA DC-007), readable by 3D cameras, 3D displays, the Nintendo 3DS and StereoPhoto Maker |
-| Hidden 3D (Magic Eye) | A single-image autostereogram: the photo's 3D shape is hidden in a repeating texture and appears when you relax your eyes. See below |
+| Stereogram | A single-image autostereogram: the photo's 3D shape is hidden in a repeating texture and appears when you relax your eyes. See below |
 | 3D photo motion | A glasses-free looping parallax animation, MP4 (30 fps) or GIF (15 fps). A virtual camera moves in front of the photo and near parts move more than far parts. Camera paths: circle, left-right sway, up-down sway, or zoom. Movement amount and loop length (1.5–8 s) are adjustable. It needs the depth map, and the depth panel's focus plane sets which depth stays still |
 
 Exports always render at full resolution. The *Output* preview shows exactly what will be exported.
 
-### Hidden 3D (Magic Eye) stereograms
+### Stereograms (Magic Eye style)
 Autostereograms like the classic *Magic Eye* prints repeat a texture strip across the image.
 
 **How it works:**
@@ -97,12 +97,19 @@ Autostereograms like the classic *Magic Eye* prints repeat a texture strip acros
 - Texture coordinates propagate outward from the centre, so each repeat is a smoothly deformed copy of its neighbour (the coherent Magic Eye look).
 - Rows are computed at 3× horizontal resolution for smooth, sub-pixel depth.
 
+**Sketch stage (default):** before the photo is hidden in a texture, it is turned into a clean line drawing. The *Sketch* view shows the drawing: **orange** is the outline, **blue** is the feature lines, grey is the body.
+- **Body shape:** the subject is found where it stands out in front of its background. The background is estimated row by row, so a floor, table or blanket that gets nearer towards the bottom of the photo isn't mistaken for the subject. Close-ups fall back to plain depth.
+- **Silhouette outline:** a line of adjustable thickness around the body.
+- **Feature lines:** folds in the depth map (head against body, ears, limbs) plus dark "ink" strokes found in the photo with a coarse difference-of-Gaussians filter. Speckles are removed.
+- **Sketch → 3D shape:** a rounded, inflated body, with the outline and feature lines **raised** (or **engraved**) so the features read clearly once the stereogram is fused.
+- **Controls:** line thickness, how many feature lines, line height, raised/engraved, body rounding, and a subject threshold (automatic ± offset).
+
 **Options:**
 - **Pattern:** organic leaves, random dots, a strip of your photo, or any uploaded texture.
 - **Colours:** jungle green, ocean, sunset, rainbow, grey or original. Image textures are tinted, like the classic green prints.
 - **Repeats across:** sets the pattern width.
 - **Depth amount (μ):** how far the shape stands out.
-- **Hidden shape:** smooth relief, stepped layers or a flat silhouette.
+- **Hidden shape:** sketch (default), smooth relief, stepped layers or a flat silhouette.
 - **Flatten background:** turns distant parts into a flat backdrop.
 - **Made for:** relaxed (wall-eyed) or cross-eyed viewing.
 - **Guide dots** above the image help your eyes lock on.
@@ -145,7 +152,7 @@ depth model ─► normalise/smooth ─► depth frame aligned with the base (ca
 | 8 | Preview renderer | `ui/preview.ts` |
 | 9 | Export engine | `worker/stereo.worker.ts`, `worker/video.ts`, `core/encode.ts`, `core/gif.ts`, `core/mpo.ts` |
 | — | 3D photo motion | `core/motion.ts` (2-pass depth warp: horizontal, then vertical via transposition) |
-| — | Hidden 3D stereogram | `core/autostereogram.ts` (textures, depth shaping, generator) |
+| — | Stereogram | `core/sketch.ts` (sketch stage), `core/autostereogram.ts` (textures, depth shaping, generator) |
 
 Key properties:
 

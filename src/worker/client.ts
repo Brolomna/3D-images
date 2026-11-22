@@ -12,7 +12,7 @@ export interface RenderOutput {
   /** Preview frames of the motion animation (motion style only). */
   motion: { frames: RGBAImage[]; hasDepth: boolean } | null;
   /** Finished image of the stereogram style. */
-  special: (RGBAImage & { hasDepth: boolean }) | null;
+  special: (RGBAImage & { hasDepth: boolean; sketch: RGBAImage | null }) | null;
 }
 
 export type ExportResult = Extract<WorkerResponse, { type: 'exported' }>;
@@ -99,7 +99,10 @@ export class StereoWorkerClient {
         const m = r.motion;
         const motion = m ? { hasDepth: m.hasDepth, frames: m.frames.map((b) => ({ width: m.width, height: m.height, data: new Uint8ClampedArray(b) })) } : null;
         const sp = r.special;
-        const special = sp ? { width: sp.width, height: sp.height, data: new Uint8ClampedArray(sp.buffer), hasDepth: sp.hasDepth } : null;
+        const special = sp ? {
+          width: sp.width, height: sp.height, data: new Uint8ClampedArray(sp.buffer), hasDepth: sp.hasDepth,
+          sketch: sp.sketch ? { width: sp.width, height: sp.height, data: new Uint8ClampedArray(sp.sketch) } : null,
+        } : null;
         const depthImg = r.depth ? (special ? { width: special.width, height: special.height, data: new Uint8ClampedArray(r.depth) } : img(r.depth)) : null;
         this.onRender({ left: img(r.left), right: img(r.right), depth: depthImg, info: r.info, motion, special });
       } catch (e) {

@@ -53,11 +53,14 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const r = preview.render(msg.settings, msg.scale, { compose: false, includeDepth: msg.includeDepth });
       const left = r.left.data.buffer as ArrayBuffer;
       const right = (r.right === r.left ? r.right.data.slice() : r.right.data).buffer as ArrayBuffer;
-      let special: { width: number; height: number; buffer: ArrayBuffer; hasDepth: boolean } | null = null;
+      let special: { width: number; height: number; buffer: ArrayBuffer; hasDepth: boolean; sketch: ArrayBuffer | null } | null = null;
       let depthImg = r.depth;
       if (msg.settings.format === 'stereogram') {
         const st = preview.renderStereogram(msg.settings, msg.scale);
-        special = { width: st.image.width, height: st.image.height, buffer: st.image.data.buffer as ArrayBuffer, hasDepth: st.hasDepth };
+        special = {
+          width: st.image.width, height: st.image.height, buffer: st.image.data.buffer as ArrayBuffer, hasDepth: st.hasDepth,
+          sketch: st.sketch ? (st.sketch.data.buffer as ArrayBuffer) : null,
+        };
         if (msg.includeDepth) depthImg = st.depth ?? undefined; // show the hidden shape
       }
       const dbuf = depthImg ? (depthImg.data.buffer as ArrayBuffer) : null;
@@ -70,7 +73,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           : [m.frame(0).data.buffer as ArrayBuffer];
         motion = { width: m.width, height: m.height, frames, hasDepth: m.hasDepth };
       }
-      const transfer: Transferable[] = [left, right, ...(dbuf ? [dbuf] : []), ...(motion?.frames ?? []), ...(special ? [special.buffer] : [])];
+      const transfer: Transferable[] = [left, right, ...(dbuf ? [dbuf] : []), ...(motion?.frames ?? []), ...(special ? [special.buffer] : []), ...(special?.sketch ? [special.sketch] : [])];
       post({
         motion,
         special,
@@ -162,7 +165,7 @@ async function exportFormat(p: StereoPipeline, s: StereoSettings, progress: (s: 
   let r: { output: RGBAImage };
   if (s.format === 'stereogram') {
     const st = p.renderStereogram(s, 1);
-    if (!st.hasDepth) throw new Error('The hidden-3D stereogram needs the depth map, which is not available yet.');
+    if (!st.hasDepth) throw new Error('The stereogram needs the depth map, which is not available yet.');
     r = { output: st.image };
   } else {
     r = p.render(s, 1);

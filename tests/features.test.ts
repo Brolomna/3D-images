@@ -409,3 +409,62 @@ describe('depth contrast and extreme depth', () => {
     expect(imagesEqual(r.left, r.right)).toBe(false);
   }, 30000);
 });
+
+import { buildSketch, DEFAULT_SKETCH, SKETCH_COLORS } from '../src/core/sketch';
+
+describe('stereogram sketch stage', () => {
+  // A round "animal" lying on a floor that gets nearer towards the bottom,
+  // with a dark eye inside it.
+  function scene() {
+    const W = 320, H = 240;
+    const depth: DepthMap = { width: W, height: H, data: new Float32Array(W * H) };
+    const photo = createImage(W, H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const inBody = Math.hypot(x - 160, y - 120) < 60;
+      const eye = Math.hypot(x - 175, y - 105) < 9;
+      depth.data[i] = 0.15 + 0.45 * (y / H) + (inBody ? 0.35 : 0);
+      const v = eye ? 20 : inBody ? 200 : 120;
+      photo.data.set([v, v * 0.9, v * 0.8, 255], i * 4);
+    }
+    return { W, H, depth, photo };
+  }
+  const col = (img: RGBAImage, x: number, y: number) => px(img, x, y).slice(0, 3);
+
+  it('draws the body, a coloured outline and feature lines, ignoring the floor', () => {
+    const { depth, photo } = scene();
+    const sk = buildSketch(photo, depth, 0, DEFAULT_SKETCH, 1);
+    expect(col(sk.image, 160, 150)).toEqual([...SKETCH_COLORS.body]); // inside the body
+    expect(col(sk.image, 160, 230)).toEqual([...SKETCH_COLORS.paper]); // near floor is NOT subject
+    expect(col(sk.image, 20, 20)).toEqual([...SKETCH_COLORS.paper]);
+    expect(col(sk.image, 101, 120)).toEqual([...SKETCH_COLORS.outline]); // contour
+    // The dark eye produces feature lines.
+    let feature = 0;
+    for (let y = 90; y < 120; y++) for (let x = 160; x < 190; x++) {
+      if (col(sk.image, x, y).join() === SKETCH_COLORS.feature.join()) feature++;
+    }
+    expect(feature).toBeGreaterThan(10);
+  });
+
+  it('turns the sketch into depth: raised outline above the body above the background', () => {
+    const { depth, photo, W } = scene();
+    const raised = buildSketch(photo, depth, 0, DEFAULT_SKETCH, 1).depth;
+    const z = (x: number, y: number) => raised.data[y * W + x];
+    expect(z(20, 20)).toBeLessThan(0.05);
+    expect(z(160, 150)).toBeGreaterThan(0.4);
+    // The outline ridge stands above the body right next to it.
+    expect(z(103, 120)).toBeGreaterThan(z(114, 120));
+    const engraved = buildSketch(photo, depth, 0, { ...DEFAULT_SKETCH, lineMode: 'engraved' }, 1).depth;
+    expect(engraved.data[120 * W + 102]).toBeLessThan(raised.data[120 * W + 102]);
+  });
+
+  it('the stereogram pipeline uses the sketch by default and returns it', () => {
+    const p = new StereoPipeline();
+    p.setSource(photo(400, 300, 3));
+    p.setDepth({ width: 40, height: 30, data: Float32Array.from({ length: 1200 }, (_, i) => (Math.hypot((i % 40) - 20, Math.floor(i / 40) - 15) < 8 ? 1 : 0.2)) });
+    const r = p.renderStereogram(settings((x) => { x.format = 'stereogram'; x.output.aspect = '4:3'; x.output.resolution = '720p'; }));
+    expect(DEFAULT_SETTINGS.stereogram.shape).toBe('sketch');
+    expect(r.sketch).not.toBeNull();
+    expect([r.sketch!.width, r.sketch!.height]).toEqual([r.image.width, r.image.height]);
+  }, 30000);
+});

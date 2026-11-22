@@ -130,6 +130,7 @@
           <button data-value="diff" title="Absolute difference between the eyes ×4">Difference</button>
           <button data-value="anaglyph" title="Red/cyan check view">Anaglyph</button>
           <button data-value="depth" title="Estimated depth map (bright = near)">Depth</button>
+          <button data-value="sketch" title="Stereogram sketch: outlines and features">Sketch</button>
           <button data-value="crop" title="Original photograph with visible region">Original</button>
         </div>
         <div class="zoom">
@@ -180,8 +181,8 @@
           </button>
           <button class="style-card" data-value="stereogram" role="radio" aria-checked="false">
             <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
-            <span class="style-name">Hidden 3D (Magic Eye)</span>
-            <span class="style-need">Relax your eyes · no glasses</span>
+            <span class="style-name">Stereogram</span>
+            <span class="style-need">Relax your eyes · hidden 3D</span>
           </button>
           <button class="style-card" data-value="wiggle" role="radio" aria-checked="false">
             <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
@@ -371,11 +372,34 @@
           <p id="sg-depth-warning" class="warn hidden">Extreme depth: the shape pops out a lot but takes longer to lock onto. Try a few seconds of relaxed staring.</p>
           <span class="label">Hidden shape</span>
           <div class="seg small" data-setting="sgShape" role="radiogroup" aria-label="Hidden shape">
+            <button data-value="sketch" title="Line sketch: body shape with outlined features">Sketch</button>
             <button data-value="smooth" title="Full 3D relief from the depth map">Smooth</button>
             <button data-value="layers" title="Stepped layers, easier to see">Layers</button>
             <button data-value="silhouette" title="Flat cut-out of the subject">Silhouette</button>
           </div>
-          <label class="slider"><span>Flatten background <output id="sg-cutoff-out"></output></span>
+          <div id="sketch-controls" class="stack">
+            <label class="slider"><span>Line thickness <output id="sk-thick-out"></output></span>
+              <input id="sk-thick" type="range" min="1" max="16" step="0.5" />
+            </label>
+            <label class="slider"><span>Feature lines <output id="sk-detail-out"></output></span>
+              <input id="sk-detail" type="range" min="0" max="1" step="0.01" />
+            </label>
+            <label class="slider"><span>Line height <output id="sk-height-out"></output></span>
+              <input id="sk-height" type="range" min="0" max="1" step="0.01" />
+            </label>
+            <div class="seg small" data-setting="skMode" role="radiogroup" aria-label="Line style">
+              <button data-value="raised" title="Outlines stand out towards you">Raised lines</button>
+              <button data-value="engraved" title="Outlines are carved into the body">Engraved lines</button>
+            </div>
+            <label class="slider"><span>Subject threshold <output id="sk-subject-out"></output></span>
+              <input id="sk-subject" type="range" min="-0.3" max="0.3" step="0.01" />
+            </label>
+            <label class="slider"><span>Body rounding <output id="sk-round-out"></output></span>
+              <input id="sk-round" type="range" min="0" max="1" step="0.01" />
+            </label>
+            <p class="hint">Open the <b>Sketch</b> view to see the drawing: <span style="color:#ff6030">orange</span> = outline, <span style="color:#1896d2">blue</span> = feature lines, grey = body.</p>
+          </div>
+          <label id="sg-cutoff-field" class="slider"><span>Flatten background <output id="sg-cutoff-out"></output></span>
             <input id="sg-cutoff" type="range" min="0" max="0.8" step="0.01" />
           </label>
           <span class="label">Made for</span>

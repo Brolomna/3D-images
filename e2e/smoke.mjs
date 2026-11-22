@@ -243,7 +243,7 @@ await waitRender();
   const frames = gifFrameCount(f.bytes);
   check(f.name.endsWith('.gif') && frames === 45, `motion GIF (zoom): ${f.name}, ${frames} frames`);
 }
-// Hidden 3D (Magic Eye) stereogram: export and verify it repeats every pattern width.
+// Stereogram: export and verify it repeats every pattern width.
 await chooseStyle('stereogram');
 await page.waitForTimeout(400);
 await page.screenshot({ path: join(out, 'style_stereogram.png') });
@@ -264,6 +264,18 @@ await page.screenshot({ path: join(out, 'style_stereogram.png') });
   check(f.name.includes('stereogram') && png.width === 1080 && bestRow > 0.9,
     `hidden 3D stereogram: ${f.name}, background repeats every ${P} px (${Math.round(100 * bestRow)}%)`);
 }
+await page.click('#view-mode button[data-value="sketch"]');
+await page.waitForTimeout(400);
+await page.screenshot({ path: join(out, 'stereogram_sketch.png') });
+const sketchShown = await page.evaluate(() => {
+  const c = document.getElementById('stage-canvas');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let paper = 0;
+  for (let i = 0; i < d.length; i += 16) if (d[i] === 244 && d[i + 1] === 241 && d[i + 2] === 234) paper++;
+  return paper > 100;
+});
+check(sketchShown, 'stereogram sketch view shows the line drawing');
+await page.click('#view-mode button[data-value="sbs"]');
 const thumbsDrawn = await page.evaluate(() => [...document.querySelectorAll('.style-card canvas')].every((c) => {
   const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
   for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true;

@@ -38,7 +38,15 @@ function loadSettings(): StereoSettings {
   const s = cloneSettings(DEFAULT_SETTINGS);
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return deepMerge(s, JSON.parse(raw));
+    if (raw) {
+      const saved = JSON.parse(raw);
+      // Migration: settings saved before the sketch stage existed adopt its defaults.
+      if (saved?.stereogram && !saved.stereogram.sketch) {
+        delete saved.stereogram.shape;
+        delete saved.stereogram.cutoff;
+      }
+      return deepMerge(s, saved);
+    }
   } catch { /* storage unavailable */ }
   return s;
 }
@@ -87,6 +95,7 @@ worker.onRender = ({ left, right, depth, info, motion, special }) => {
   // Compose the selected format with the same code the exporter uses.
   const output = special ?? composeLayout(left, right, settings.format, settings.arrangement, settings.anaglyphMethod, settings.resizeInterpolation);
   lastStereogram = special;
+  preview.setSketch(special?.sketch ?? null);
   let anim: { frames: RGBAImage[]; frameMs: number } | null = null;
   if (settings.format === 'wiggle') anim = { frames: [left, right], frameMs: settings.wiggleFrameMs };
   else if (settings.format === 'motion' && motion) anim = { frames: motion.frames, frameMs: settings.motion.durationMs / motion.frames.length };
@@ -278,7 +287,7 @@ function fmt(n: number, d = 2) {
 
 const FORMAT_LABEL: Record<StereoFormat, string> = {
   sbs: 'Side-by-side', 'half-sbs': 'Half side-by-side', ou: 'Over/under', 'half-ou': 'Half over/under',
-  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion', stereogram: 'Hidden 3D stereogram',
+  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion', stereogram: 'Stereogram',
 };
 
 // ───────────────────────── 3D style picker ─────────────────────────
@@ -449,6 +458,22 @@ function syncUI() {
   $('sg-depth-warning').classList.toggle('hidden', sg.depth <= 0.5);
   $<HTMLInputElement>('sg-cutoff').value = String(sg.cutoff);
   $('sg-cutoff-out').textContent = `${Math.round(sg.cutoff * 100)}%`;
+  const sketchMode = sg.shape === 'sketch';
+  $('sketch-controls').classList.toggle('hidden', !sketchMode);
+  $('sg-cutoff-field').classList.toggle('hidden', sketchMode);
+  const sub = sg.sketch.subject ?? 0;
+  $<HTMLInputElement>('sk-subject').value = String(sub);
+  $('sk-subject-out').textContent = Math.abs(sub) < 0.005 ? 'auto' : `auto ${sub > 0 ? '+' : '−'}${Math.round(Math.abs(sub) * 100)}`;
+  const sk = sg.sketch;
+  setSeg('skMode', sk.lineMode);
+  $<HTMLInputElement>('sk-thick').value = String(sk.thickness);
+  $('sk-thick-out').textContent = `${fmt(sk.thickness, 1)} px`;
+  $<HTMLInputElement>('sk-detail').value = String(sk.detail);
+  $('sk-detail-out').textContent = `${Math.round(sk.detail * 100)}%`;
+  $<HTMLInputElement>('sk-height').value = String(sk.lineHeight);
+  $('sk-height-out').textContent = `${Math.round(sk.lineHeight * 100)}%`;
+  $<HTMLInputElement>('sk-round').value = String(sk.rounding);
+  $('sk-round-out').textContent = `${Math.round(sk.rounding * 100)}%`;
   $<HTMLInputElement>('sg-guides').checked = sg.guides;
   $<HTMLInputElement>('motion-amount').value = String(s.motion.amplitude);
   $('motion-amount-out').textContent = `${s.motion.amplitude} px`;
@@ -818,6 +843,12 @@ function bindAll() {
       toast((err as Error).message, true);
     }
   });
+  bindSeg('skMode', (v) => { settings.stereogram.sketch.lineMode = v as 'raised' | 'engraved'; });
+  onInput('sk-thick', (el) => { settings.stereogram.sketch.thickness = num(el, 5); });
+  onInput('sk-detail', (el) => { settings.stereogram.sketch.detail = num(el, 0.5); });
+  onInput('sk-height', (el) => { settings.stereogram.sketch.lineHeight = num(el, 0.5); });
+  onInput('sk-round', (el) => { settings.stereogram.sketch.rounding = num(el, 0.6); });
+  onInput('sk-subject', (el) => { settings.stereogram.sketch.subject = num(el, 0); });
   onSelect('sg-palette', (v) => { settings.stereogram.palette = v as StereogramPalette; });
   onInput('sg-repeats', (el) => { settings.stereogram.repeats = num(el, 6); });
   onInput('sg-depth', (el) => { settings.stereogram.depth = num(el, 0.33); });

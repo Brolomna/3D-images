@@ -15,11 +15,12 @@
  * the photo or a user-supplied texture image.
  */
 import { smoothDepth, type DepthMap } from './depth';
+import { DEFAULT_SKETCH, type SketchSettings } from './sketch';
 import { createImage, type RGBAImage } from './types';
 
 export type StereogramPattern = 'dots' | 'organic' | 'photo' | 'custom';
 export type StereogramPalette = 'jungle' | 'ocean' | 'sunset' | 'rainbow' | 'mono' | 'original';
-export type StereogramShape = 'smooth' | 'layers' | 'silhouette';
+export type StereogramShape = 'sketch' | 'smooth' | 'layers' | 'silhouette';
 
 export interface StereogramSettings {
   pattern: StereogramPattern;
@@ -29,6 +30,8 @@ export interface StereogramSettings {
   /** Depth of field μ (0.1–0.75): fraction of the viewing distance the shape spans (>0.5 = extreme). */
   depth: number;
   shape: StereogramShape;
+  /** Sketch stage (shape 'sketch'): outlines + body shape + feature lines. */
+  sketch: SketchSettings;
   /** Depths below this become a flat background (0..0.9). */
   cutoff: number;
   /** Viewing method the image is made for: parallel (wall-eyed, standard) or cross-eyed. */
@@ -43,8 +46,9 @@ export const DEFAULT_STEREOGRAM: StereogramSettings = {
   palette: 'jungle',
   repeats: 6,
   depth: 0.33,
-  shape: 'smooth',
-  cutoff: 0.25,
+  shape: 'sketch',
+  sketch: { ...DEFAULT_SKETCH },
+  cutoff: 0.35,
   viewing: 'parallel',
   guides: true,
   seed: 1,
