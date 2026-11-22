@@ -434,8 +434,27 @@ export class PreviewRenderer {
       const r = this.stageRect();
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
+    // Touch: two fingers pinch-zoom and pan (works alongside mouse wheel).
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch: { dist: number; mid: { x: number; y: number } } | null = null;
+    const pinchState = () => {
+      const [a, b] = [...touches.values()];
+      return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    };
     el.addEventListener('pointerdown', (e) => {
       const p = local(e);
+      if (e.pointerType === 'touch') {
+        touches.set(e.pointerId, p);
+        if (touches.size === 2) {
+          // Second finger: switch from drag to pinch.
+          if (this.drag && this.drag.kind !== 'pan' && this.crop) this.onCropChange(this.crop, true);
+          this.drag = null;
+          pinch = pinchState();
+          el.setPointerCapture(e.pointerId);
+          return;
+        }
+        if (touches.size > 2) return;
+      }
       if (this.mode === 'crop' && this.manualCrop) {
         const hnd = this.hitHandle(p.x, p.y);
         if (hnd) {
@@ -452,6 +471,24 @@ export class PreviewRenderer {
     });
     el.addEventListener('pointermove', (e) => {
       const p = local(e);
+      if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+        touches.set(e.pointerId, p);
+        if (pinch && touches.size === 2) {
+          const next = pinchState();
+          const view = this.viewTransform();
+          if (view) {
+            // Pan with the midpoint, then zoom about it.
+            const { w, h } = view.content;
+            this.cx -= (next.mid.x - pinch.mid.x) / view.scale / w;
+            this.cy -= (next.mid.y - pinch.mid.y) / view.scale / h;
+            this.zoom = view.scale;
+            this.clampCenter();
+            this.zoomBy(next.dist / pinch.dist, next.mid);
+          }
+          pinch = next;
+          return;
+        }
+      }
       const view = this.viewTransform();
       if (view) {
         const c = this.screenToContent(p.x, p.y, view);
@@ -479,6 +516,8 @@ export class PreviewRenderer {
       this.requestDraw();
     });
     const end = (e: PointerEvent) => {
+      touches.delete(e.pointerId);
+      if (touches.size < 2) pinch = null;
       if (this.drag && this.drag.kind !== 'pan' && this.crop) this.onCropChange(this.crop, true);
       this.drag = null;
       el.classList.remove('grabbing');

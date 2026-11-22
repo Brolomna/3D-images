@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#0e0f12" />
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -12,7 +12,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='13' height='20' rx='2' fill='%23ff5d5d'/%3E%3Crect x='17' y='6' width='13' height='20' rx='2' fill='%2340d0ff'/%3E%3C/svg%3E" />
 </head>
 <body>
-  <div id="app" class="app">
+  <div id="app" class="app" data-tab="photo">
     <header class="topbar">
       <div class="brand">
         <span class="logo" aria-hidden="true"><i></i><i></i></span>
@@ -29,7 +29,7 @@
 
     <!-- LEFT PANEL: input, aspect, size, fitting -->
     <aside class="panel panel-left" aria-label="Image and layout">
-      <section class="group">
+      <section class="group" data-tab="photo">
         <h2>Image</h2>
         <label id="dropzone" class="dropzone" tabindex="0">
           <input id="file-input" type="file" hidden />
@@ -41,7 +41,7 @@
         <dl id="image-info" class="info hidden"></dl>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="photo">
         <h2>Batch</h2>
         <input id="batch-input" type="file" multiple hidden />
         <button id="btn-batch" class="btn small wide">Process multiple photos → ZIP</button>
@@ -49,7 +49,7 @@
         <ol id="batch-list" class="batch-list hidden"></ol>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="photo">
         <h2>Aspect ratio</h2>
         <div class="seg" data-setting="aspect" role="radiogroup" aria-label="Aspect ratio">
           <button data-value="9:16">9:16</button>
@@ -68,7 +68,7 @@
         </div>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="photo">
         <h2>Output size</h2>
         <label class="field"><span>Resolution</span>
           <select id="resolution">
@@ -87,7 +87,7 @@
         <div id="size-readout" class="readout"></div>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="photo">
         <h2>Fitting &amp; crop</h2>
         <div class="seg" data-setting="fit" role="radiogroup" aria-label="Image fitting">
           <button data-value="fill" title="Fill the entire canvas (crops overflow)">Fill</button>
@@ -160,7 +160,7 @@
 
     <!-- RIGHT PANEL: stereo + export -->
     <aside class="panel panel-right" aria-label="Stereo and export">
-      <section class="group">
+      <section class="group" data-tab="style">
         <h2>Choose 3D style</h2>
         <div id="style-grid" class="style-grid" role="radiogroup" aria-label="3D style">
           <button class="style-card" data-value="sbs" role="radio" aria-checked="false">
@@ -206,7 +206,7 @@
         </div>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="adjust">
         <h2 class="with-toggle">Automatic depth
           <label class="switch"><input id="depth-enabled" type="checkbox" /><span></span><em>On</em></label>
         </h2>
@@ -226,7 +226,7 @@
         <p class="hint">The app estimates a depth map of the photo on your device (Depth Anything V2; ~27 MB model, downloaded once). Near parts get more disparity than far parts, so the subject stands out from the background. Focus plane = depth that stays at the base offset.</p>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="adjust">
         <h2>Horizontal offset</h2>
         <div class="slider-row">
           <input id="h-offset" type="range" min="-100" max="100" step="0.1" aria-label="Horizontal offset in pixels" />
@@ -239,7 +239,7 @@
         <p class="hint">Uniform horizontal displacement between the left- and right-eye views (binocular disparity), in output pixels. It sets where the whole picture sits in depth; with automatic depth on, the per-pixel depth disparity is added to it.</p>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="adjust">
         <h2 class="with-toggle">Vertical offset
           <label class="switch"><input id="v-enabled" type="checkbox" /><span></span><em>On</em></label>
         </h2>
@@ -255,7 +255,7 @@
         <p class="hint">Fractional values are rendered with sub-pixel interpolation.</p>
       </section>
 
-      <section class="group">
+      <section class="group" data-tab="adjust">
         <h2>Stereo configuration</h2>
         <span class="label">Offset direction</span>
         <div class="seg small" data-setting="direction" role="radiogroup" aria-label="Offset direction">
@@ -281,27 +281,7 @@
         <div id="offset-summary" class="readout"></div>
       </section>
 
-      <section class="group">
-        <h2>Interpolation</h2>
-        <label class="field"><span>Resizing</span>
-          <select id="resize-interp">
-            <option value="lanczos">Lanczos (best)</option>
-            <option value="bicubic">Bicubic</option>
-            <option value="bilinear">Bilinear</option>
-            <option value="nearest">Nearest neighbour</option>
-          </select>
-        </label>
-        <label class="field"><span>Sub-pixel displacement</span>
-          <select id="shift-interp">
-            <option value="bicubic">Bicubic</option>
-            <option value="lanczos">Lanczos</option>
-            <option value="bilinear">Bilinear</option>
-            <option value="nearest">Nearest neighbour</option>
-          </select>
-        </label>
-      </section>
-
-      <section class="group">
+      <section class="group" data-tab="export">
         <h2>Export</h2>
         <div id="still-options">
           <div class="seg small" data-setting="exportFormat" role="radiogroup" aria-label="Image file type">
@@ -362,8 +342,34 @@
         <button id="btn-share" class="btn small ghost wide">Copy settings link</button>
         <p class="hint">Exports always render at full output resolution. PNG is lossless; the Output preview shows exactly what is exported.</p>
       </section>
+
+      <section class="group" data-tab="export">
+        <h2>Interpolation</h2>
+        <label class="field"><span>Resizing</span>
+          <select id="resize-interp">
+            <option value="lanczos">Lanczos (best)</option>
+            <option value="bicubic">Bicubic</option>
+            <option value="bilinear">Bilinear</option>
+            <option value="nearest">Nearest neighbour</option>
+          </select>
+        </label>
+        <label class="field"><span>Sub-pixel displacement</span>
+          <select id="shift-interp">
+            <option value="bicubic">Bicubic</option>
+            <option value="lanczos">Lanczos</option>
+            <option value="bilinear">Bilinear</option>
+            <option value="nearest">Nearest neighbour</option>
+          </select>
+        </label>
+      </section>
     </aside>
   </div>
+  <nav id="mobile-tabs" class="mobile-tabs" aria-label="Editor sections">
+    <button data-tab="photo" aria-current="page"><span aria-hidden="true">🖼</span>Photo</button>
+    <button data-tab="style"><span aria-hidden="true">◧</span>3D style</button>
+    <button data-tab="adjust"><span aria-hidden="true">⇆</span>Depth</button>
+    <button data-tab="export"><span aria-hidden="true">⇩</span>Export</button>
+  </nav>
   <div id="toast" class="toast hidden" role="alert"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>

@@ -88,6 +88,13 @@ Exports always render at full resolution. The *Output* preview shows exactly wha
 - **Share links:** the settings that differ from the defaults are stored in the URL (`#s=…`), and *Copy settings link* shares them. Photos are never part of the link.
 - **Installable and offline:** the app is a PWA. After the first visit it works offline, and the depth model also works offline once it has been downloaded.
 - **Preview modes:** output (wiggle and motion styles play animated), synchronised L/R compare with pixel readout, wiggle, difference ×4, anaglyph check, depth map, and the original with the crop editor.
+- **Mobile:** works like a phone photo editor.
+  - The preview stays pinned at the top while you adjust.
+  - A bottom tab bar (Photo · 3D style · Depth · Export) shows one control section at a time.
+  - Pinch to zoom and pan with two fingers; double-tap zooms in.
+  - Large touch targets; inputs never trigger iOS zoom-on-focus.
+  - Notch / home-indicator safe areas are respected.
+  - In landscape, phones show the preview left and the controls right.
 - **Keyboard:** ←/→ nudges the offset (hold Shift for 0.1 px steps). ↑/↓ nudges the vertical offset. Ctrl/⌘+S exports.
 
 ## How it works

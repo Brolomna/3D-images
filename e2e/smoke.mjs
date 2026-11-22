@@ -100,6 +100,29 @@ async function exportFile(name) {
   await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 60000 });
   return { path, name: dl.suggestedFilename(), bytes: readFileSync(path) };
 }
+/** Count image frames by walking the GIF block structure. */
+function gifFrameCount(b) {
+  let p = 13;
+  if (b[10] & 0x80) p += 3 * (1 << ((b[10] & 7) + 1));
+  const skipSub = () => { while (b[p] !== 0) p += b[p] + 1; p++; };
+  let frames = 0;
+  while (p < b.length) {
+    const id = b[p++];
+    if (id === 0x3b) break;
+    if (id === 0x21) { p++; skipSub(); continue; }
+    if (id === 0x2c) {
+      frames++;
+      const flags = b[p + 8];
+      p += 9;
+      if (flags & 0x80) p += 3 * (1 << ((flags & 7) + 1));
+      p++; // LZW minimum code size
+      skipSub();
+      continue;
+    }
+    return -1;
+  }
+  return frames;
+}
 async function chooseStyle(format) {
   await page.click(`.style-card[data-value="${format}"]`);
   await waitRender();
@@ -217,9 +240,7 @@ await page.click('.seg[data-setting="motionFile"] button[data-value="gif"]');
 await waitRender();
 {
   const f = await exportFile();
-  // Count GIF frames (graphic control extensions).
-  let frames = 0;
-  for (let i = 0; i < f.bytes.length - 2; i++) if (f.bytes[i] === 0x21 && f.bytes[i + 1] === 0xf9 && f.bytes[i + 2] === 0x04) frames++;
+  const frames = gifFrameCount(f.bytes);
   check(f.name.endsWith('.gif') && frames === 45, `motion GIF (zoom): ${f.name}, ${frames} frames`);
 }
 const thumbsDrawn = await page.evaluate(() => [...document.querySelectorAll('.style-card canvas')].every((c) => {
@@ -277,6 +298,20 @@ await page.waitForTimeout(400);
 await page.screenshot({ path: join(out, 'mobile.png'), fullPage: true });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 check(overflow <= 0, `mobile layout has no horizontal scroll (${overflow}px)`);
+for (const tab of ['photo', 'style', 'adjust', 'export']) {
+  await page.click(`#mobile-tabs button[data-tab="${tab}"]`);
+  await page.waitForTimeout(150);
+  const vis = await page.evaluate(() => [...document.querySelectorAll('.group')].filter((g) => g.offsetParent !== null).map((g) => g.dataset.tab));
+  check(vis.length > 0 && vis.every((t) => t === tab), `mobile tab "${tab}" shows only its ${vis.length} section(s)`);
+}
+const pinned = await page.evaluate(() => {
+  window.scrollTo(0, 400);
+  const r = document.querySelector('.stage-wrap').getBoundingClientRect();
+  return r.top >= 0 && r.top < 80 && r.height > 200;
+});
+check(pinned, 'mobile preview stays pinned while scrolling the controls');
+await page.screenshot({ path: join(out, 'mobile_export_tab.png') });
+await page.click('#mobile-tabs button[data-tab="photo"]');
 check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
 await server.close();
 

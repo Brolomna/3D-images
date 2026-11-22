@@ -282,7 +282,8 @@ const FORMAT_LABEL: Record<StereoFormat, string> = {
 /** Downscale an RGBA image to a small canvas-backed RGBA (for style thumbnails). */
 function shrink(img: RGBAImage, maxH: number): RGBAImage {
   const s = Math.min(1, maxH / img.height);
-  const w = Math.max(2, Math.round(img.width * s)), h = Math.max(2, Math.round(img.height * s));
+  // Even sizes so half-width / half-height styles split exactly.
+  const w = Math.max(2, 2 * Math.round((img.width * s) / 2)), h = Math.max(2, 2 * Math.round((img.height * s) / 2));
   const src = new OffscreenCanvas(img.width, img.height);
   src.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
   const dst = new OffscreenCanvas(w, h);
@@ -806,6 +807,25 @@ function bindAll() {
       const t = f.dataset.thumb;
       preview.setMode(t === 'original' ? 'crop' : t === 'sbs' ? 'sbs' : 'compare');
       syncUI();
+    });
+  });
+  // Mobile: bottom tab bar shows one control section at a time.
+  document.querySelectorAll<HTMLButtonElement>('#mobile-tabs button').forEach((b) => {
+    b.addEventListener('click', () => {
+      const tab = b.dataset.tab!;
+      $('app').dataset.tab = tab;
+      document.querySelectorAll<HTMLButtonElement>('#mobile-tabs button').forEach((x) => {
+        if (x === b) x.setAttribute('aria-current', 'page');
+        else x.removeAttribute('aria-current');
+      });
+      // Bring the newly shown controls to the top, just under the preview.
+      const first = document.querySelector<HTMLElement>(`.group[data-tab="${tab}"]`);
+      if (first && window.matchMedia('(max-width: 900px)').matches) {
+        const stage = document.querySelector<HTMLElement>('.stage-wrap')!;
+        const offset = stage.getBoundingClientRect().bottom;
+        const top = first.getBoundingClientRect().top + window.scrollY - offset;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'instant' as ScrollBehavior });
+      }
     });
   });
   $('zoom-in').addEventListener('click', () => preview.zoomBy(1.5));
