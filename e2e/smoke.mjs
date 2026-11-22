@@ -251,18 +251,21 @@ await page.screenshot({ path: join(out, 'style_stereogram.png') });
   const f = await exportFile();
   const png = decode(f.bytes);
   const P = Math.round(png.width / 6), ch = png.channels;
-  // Flat (background) rows repeat exactly every pattern width.
-  let bestRow = 0;
+  // Flat background stretches repeat exactly every pattern width: find the
+  // longest run of pixels that equal the pixel one pattern width further on.
+  let bestRun = 0;
   for (let y = 60; y < png.height; y += 10) {
-    let same = 0, total = 0;
+    let run = 0;
     for (let x = 0; x + P < png.width; x++) {
-      total++;
-      if (png.data[(y * png.width + x) * ch] === png.data[(y * png.width + x + P) * ch]) same++;
+      const a = (y * png.width + x) * ch, b = a + P * ch;
+      if (png.data[a] === png.data[b] && png.data[a + 1] === png.data[b + 1] && png.data[a + 2] === png.data[b + 2]) {
+        run++;
+        bestRun = Math.max(bestRun, run);
+      } else run = 0;
     }
-    bestRow = Math.max(bestRow, same / total);
   }
-  check(f.name.includes('stereogram') && png.width === 1080 && bestRow > 0.9,
-    `hidden 3D stereogram: ${f.name}, background repeats every ${P} px (${Math.round(100 * bestRow)}%)`);
+  check(f.name.includes('stereogram') && png.width === 1080 && bestRun >= 2 * P,
+    `stereogram: ${f.name}, background repeats every ${P} px (longest exact run ${bestRun} px)`);
 }
 await page.click('#view-mode button[data-value="sketch"]');
 await page.waitForTimeout(400);
