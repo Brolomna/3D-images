@@ -90,7 +90,12 @@ async function waitRender() {
   await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 120000, polling: 50 });
 }
 async function waitDepth() {
-  await page.waitForFunction(() => ['ready', 'error'].includes(window.__stereo.depth), null, { timeout: 300000, polling: 200 });
+  try {
+    await page.waitForFunction(() => ['ready', 'error'].includes(window.__stereo.depth), null, { timeout: 300000, polling: 200 });
+  } catch (e) {
+    console.log('depth wait timed out:', await page.evaluate(() => [window.__stereo?.depth, document.getElementById('depth-status').textContent]), errors);
+    throw e;
+  }
   await waitRender();
 }
 async function exportFile(name) {
