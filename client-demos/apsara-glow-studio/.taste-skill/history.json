@@ -1,0 +1,20 @@
+{
+  "palettes": [
+    "plaster-rose"
+  ],
+  "types": [
+    "literata"
+  ],
+  "dealt": [
+    "nunito",
+    "literata",
+    "work-sans"
+  ],
+  "moments": [
+    {
+      "id": "picture-develops",
+      "at": "2026-11-24T07:10:24.274Z",
+      "seed": "fbe7df27"
+    }
+  ]
+}

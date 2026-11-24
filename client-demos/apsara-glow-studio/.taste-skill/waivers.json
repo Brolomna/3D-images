@@ -1,0 +1,1 @@
+[{"check":"scroll-reveal","target":"div.book-panel.span-6 > form.form > div.btn-row > button.btn.btn--primary","reason":"Not page code and intermittent: the kit's phone action bar (system.js) observes this button as a twin of its own 'Book an appointment' action; the page adds no scroll animation to the form."}]
