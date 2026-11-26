@@ -51,8 +51,10 @@ export interface OutputSizeSpec {
  *  mpo      – multi-picture JPEG with two W × H views (3D cameras / displays)
  *  motion   – "3D photo": depth-driven camera-motion animation, W × H frames
  *  stereogram – single-image autostereogram ("Magic Eye"), W × H
+ *  card     – Layered 3D card: the uploaded card split into frame / character /
+ *             background layers with a live tilt preview (not rendered here)
  */
-export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo' | 'motion' | 'stereogram';
+export type StereoFormat = 'sbs' | 'half-sbs' | 'ou' | 'half-ou' | 'anaglyph' | 'wiggle' | 'mpo' | 'motion' | 'stereogram' | 'card';
 
 export interface OutputSize {
   /** Final output file size (for wiggle / mpo: size of each frame / image). */

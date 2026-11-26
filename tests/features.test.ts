@@ -553,3 +553,104 @@ describe('3D Scene', () => {
     expect(imagesEqual(out.left, out.right)).toBe(false);
   }, 30000);
 });
+
+import { bannerLine, DEFAULT_CARD, findWindow, pushPull, splitCard } from '../src/core/cardlayers';
+
+describe('Layered 3D card', () => {
+  // 300 × 500 card: dark frame, window (40,50)-(260,450) filled with green,
+  // a bronze flourish at the window's top-left corner, a banner from y = 330
+  // with a dark top border, and a round "character" in the window.
+  function card() {
+    const W = 300, H = 500;
+    const img = createImage(W, H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let c = [58, 22, 24];
+      if (x >= 40 && x < 260 && y >= 50 && y < 450) c = [50, 120, 70];
+      if (x >= 40 && x < 80 && y >= 50 && y < 90 && Math.hypot(x - 40, y - 50) < 40) c = [196, 146, 62]; // flourish
+      if (Math.hypot(x - 150, y - 220) < 70 || (x >= 120 && x < 180 && y >= 220)) c = [230, 200, 180]; // character (head + body)
+      if (y >= 326 && y < 330) c = [20, 8, 8]; // banner border
+      if (y >= 330 && y < 380) c = [230, 60, 50]; // banner
+      img.data.set([...c, 255], (y * W + x) * 4);
+    }
+    // The segmentation model's answer: the round character.
+    const matte = (w: [number, number, number, number]) => {
+      const cw = w[2] - w[0], ch = w[3] - w[1];
+      const m = new Float32Array(cw * ch);
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+        const X = x + w[0], Y = y + w[1];
+        m[y * cw + x] = Math.hypot(X - 150, Y - 220) < 70 || (X >= 120 && X < 180 && Y >= 220 && Y < 326) ? 1 : 0;
+      }
+      return m;
+    };
+    return { img, matte, W, H };
+  }
+  const settings = { ...DEFAULT_CARD, window: [40 / 300, 50 / 500, 260 / 300, 450 / 500] as [number, number, number, number], bannerBand: [0.6, 0.7] as [number, number], extend: [30, 20] as [number, number] };
+
+  it('finds the window from a transparent hole, an override, or the default', () => {
+    const { img } = card();
+    expect(findWindow(img, settings.window)).toEqual([40, 50, 260, 450]);
+    const holed = { ...img, data: img.data.slice() };
+    for (let y = 60; y < 440; y++) for (let x = 50; x < 250; x++) holed.data[(y * 300 + x) * 4 + 3] = 0;
+    expect(findWindow(holed, null)).toEqual([50, 60, 250, 440]);
+    const [x0, , x1] = findWindow(img, null); // Howlfall fractions
+    expect(x0).toBe(Math.round((98 / 941) * 300));
+    expect(x1).toBe(Math.round((843 / 941) * 300));
+  });
+
+  it('detects the banner top edge (dark → bright step)', () => {
+    const { img } = card();
+    const line = bannerLine(img, [40, 50, 260, 450], [0.6, 0.7]);
+    for (const x of [60, 150, 240]) expect(Math.abs(line[x] - 330)).toBeLessThanOrEqual(6); // the tool places the cut ~3 px below the step
+    expect(bannerLine(img, [40, 50, 260, 450], null)[100]).toBe(450);
+  });
+
+  it('push-pull fills a large hole with the surrounding colour', () => {
+    const w = 64, h = 64;
+    const rgb = new Float32Array(w * h * 3), wt = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const x = i % w, y = Math.floor(i / w);
+      const known = x < 8 || x >= 56 || y < 8 || y >= 56;
+      wt[i] = known ? 1 : 0;
+      if (known) rgb.set([200, 100, 50], i * 3);
+    }
+    const f = pushPull(rgb, wt, w, h);
+    const c = (32 * w + 32) * 3;
+    expect(Math.abs(f[c] - 200)).toBeLessThan(2);
+    expect(Math.abs(f[c + 1] - 100)).toBeLessThan(2);
+  });
+
+  it('splits into a still frame, a character and a filled background', () => {
+    const { img, matte, W } = card();
+    const r = splitCard(img, matte, settings, null);
+    for (const l of [r.frame, r.char, r.bg]) expect([l.width, l.height]).toEqual([300, 500]);
+    const a = (l: RGBAImage, x: number, y: number) => l.data[(y * W + x) * 4 + 3];
+    // Frame: window open above the banner, closed elsewhere, flourish kept.
+    expect(a(r.frame, 150, 150)).toBe(0);
+    expect(a(r.frame, 10, 10)).toBe(255);
+    expect(a(r.frame, 150, 360)).toBe(255); // banner stays on the frame
+    expect(a(r.frame, 45, 55)).toBeGreaterThan(200); // flourish at the window edge
+    // Character: inside the window, above the banner; cut-out matches the matte.
+    expect(a(r.char, 150, 220)).toBe(255);
+    expect(a(r.char, 60, 300)).toBe(0);
+    // Clothes continue a little under the banner (mirrored), hidden by the frame.
+    expect(a(r.char, 150, 300)).toBe(255);
+    expect(a(r.char, 150, 340)).toBeGreaterThan(200); // continued under the banner
+    expect(a(r.char, 200, 340)).toBe(0);
+    // Background: opaque and filled where the character was (no black hole).
+    const bg = px(r.bg, 150, 220);
+    expect(bg[3]).toBe(255);
+    expect(bg[1]).toBeGreaterThan(bg[0]); // greenish fill from around the character
+    expect(r.info.win).toEqual({ x: 0.1333, y: 0.1, w: 0.7333, h: 0.8 });
+    expect(r.info.ownBackground).toBe(false);
+  });
+
+  it('uses the painting as the background when given, and can skip the banner', () => {
+    const { img, matte } = card();
+    const painting = photo(200, 300, 4);
+    const r = splitCard(img, matte, { ...settings, noBanner: true }, painting);
+    expect(r.bg).toBe(painting);
+    expect(r.info.ownBackground).toBe(true);
+    expect(r.info.bannerTop).toBeNull();
+    expect(() => splitCard(img, (w) => new Float32Array((w[2] - w[0]) * (w[3] - w[1])), settings, null)).toThrow(/No character/);
+  });
+});

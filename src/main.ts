@@ -7,6 +7,7 @@ import { zipSync } from 'fflate';
 import type { DepthMap } from './core/depth';
 import { composeLayout } from './core/formats';
 import { defaultCrop, resolveOutputSize, type FitMode, type StereoFormat } from './core/layout';
+import { DEFAULT_WINDOW } from './core/cardlayers';
 import {
   cloneSettings, DEFAULT_SETTINGS, effectiveOffsets,
   type AnaglyphMethod, type StereoSettings,
@@ -21,6 +22,9 @@ import { ACCEPT_ATTR, createSampleImage, importFile, type ImportedImage } from '
 import { PreviewRenderer, type ViewMode } from './ui/preview';
 import { deepMerge, settingsFromHash, shareUrl } from './ui/share';
 import { StereoWorkerClient } from './worker/client';
+import { CardClient, type CardResult } from './card/client';
+import { cardZip } from './card/export';
+import { CardViewer } from './card/viewer';
 import type { RenderInfo } from './worker/protocol';
 
 const STORAGE_KEY = 'stereo3d.settings.v2';
@@ -194,6 +198,79 @@ function syncDepthStatus() {
       break;
     default:
       el.textContent = '';
+  }
+}
+
+// ───────────────────────── Layered 3D card ─────────────────────────
+
+const cardClient = new CardClient();
+const cardViewer = new CardViewer($('stage'));
+let cardResult: (CardResult & { key: string }) | null = null;
+let cardUrls: string[] = [];
+let cardBg: { name: string; image: RGBAImage } | null = null;
+let cardBusy = false;
+
+function cardKey(): string {
+  return JSON.stringify({ c: settings.card, t: imageToken, bg: cardBg?.name ?? null });
+}
+
+/** Show the tilt viewer in the Output view when the Layered 3D card style is chosen. */
+function syncCardView() {
+  const on = settings.format === 'card' && preview.mode === 'sbs' && !!current;
+  cardViewer.setVisible(on);
+  if (!on) return;
+  if (!cardResult) {
+    cardViewer.setLayers(null);
+    cardViewer.setMessage(cardBusy ? 'Splitting the card…' : 'Press “Split card into layers” to build the 3D card.');
+  } else {
+    cardViewer.setMessage(cardResult.key === cardKey() ? '' : 'Settings changed — split again to update.');
+  }
+  const status = $('card-status');
+  if (!cardBusy && cardResult) {
+    status.className = 'depth-status ok';
+    status.textContent = `✓ Split with ${cardResult.model} in ${(cardResult.ms / 1000).toFixed(1)} s`;
+  }
+}
+
+async function toUrl(img: RGBAImage): Promise<string> {
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  c.getContext('2d')!.putImageData(new ImageData(img.data as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
+  const blob = await new Promise<Blob>((res) => c.toBlob((b) => res(b!), 'image/png'));
+  return URL.createObjectURL(blob);
+}
+
+async function runCardSplit() {
+  if (!current || cardBusy) return;
+  cardBusy = true;
+  syncCardView();
+  const status = $('card-status');
+  const btn = $<HTMLButtonElement>('card-split');
+  btn.disabled = true;
+  try {
+    const key = cardKey();
+    const r = await cardClient.split(current.image, cardBg?.image ?? null, settings.card, (p) => {
+      status.className = 'depth-status';
+      if (p.total) {
+        const pct = Math.round((100 * (p.loaded ?? 0)) / p.total);
+        status.innerHTML = `<span>${p.stage} ${pct}%</span><span class="bar"><i style="width:${pct}%"></i></span>`;
+      } else {
+        status.innerHTML = `<span class="spinner"></span><span>${p.stage}…</span>`;
+      }
+    });
+    cardUrls.forEach((u) => URL.revokeObjectURL(u));
+    const [frame, char, bg] = await Promise.all([toUrl(r.frame), toUrl(r.char), toUrl(r.bg)]);
+    cardUrls = [frame, char, bg];
+    cardResult = { ...r, key };
+    cardViewer.setLayers({ frame, char, bg, win: r.info.win, size: r.info.size });
+  } catch (e) {
+    status.className = 'depth-status err';
+    status.textContent = `Could not split the card: ${(e as Error).message}`;
+    toast(`Layered 3D card failed: ${(e as Error).message}`, true);
+  } finally {
+    cardBusy = false;
+    btn.disabled = false;
+    syncCardView();
   }
 }
 
@@ -422,7 +499,7 @@ function fmt(n: number, d = 2) {
 
 const FORMAT_LABEL: Record<StereoFormat, string> = {
   sbs: 'Side-by-side', 'half-sbs': 'Half side-by-side', ou: 'Over/under', 'half-ou': 'Half over/under',
-  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion', stereogram: 'Stereogram',
+  anaglyph: 'Anaglyph', wiggle: 'Wiggle', mpo: 'MPO', motion: '3D photo motion', stereogram: 'Stereogram', card: 'Layered 3D card',
 };
 
 // ───────────────────────── 3D style picker ─────────────────────────
@@ -453,6 +530,7 @@ function updateStyleThumbs(left: RGBAImage, right: RGBAImage) {
       if (f === 'wiggle') img = l;
       else if (f === 'motion') img = lastMotionFrame ? shrink(lastMotionFrame, 120) : l;
       else if (f === 'stereogram') img = lastStereogram ? shrink(lastStereogram, 120) : l;
+      else if (f === 'card') img = l;
       else img = composeLayout(l, r, f === 'mpo' ? 'sbs' : f, settings.arrangement, settings.anaglyphMethod, 'bilinear');
       const c = card.querySelector('canvas')!;
       const g = c.getContext('2d')!;
@@ -464,9 +542,9 @@ function updateStyleThumbs(left: RGBAImage, right: RGBAImage) {
       const w = img.width * k, h = img.height * k;
       g.imageSmoothingQuality = 'high';
       g.drawImage(tmp, (c.width - w) / 2, (c.height - h) / 2, w, h);
-      if (f === 'wiggle' || f === 'motion' || f === 'mpo') {
+      if (f === 'wiggle' || f === 'motion' || f === 'mpo' || f === 'card') {
         g.font = '600 15px system-ui, sans-serif';
-        const tag = f === 'wiggle' ? 'L ⇄ R' : f === 'motion' ? '▶ motion' : '2 JPEGs';
+        const tag = f === 'wiggle' ? 'L ⇄ R' : f === 'motion' ? '▶ motion' : f === 'card' ? '3 layers' : '2 JPEGs';
         const tw = g.measureText(tag).width + 12;
         g.fillStyle = 'rgba(14,15,18,0.85)';
         g.fillRect(c.width - tw - 6, c.height - 26, tw, 20);
@@ -596,6 +674,22 @@ function syncUI() {
   setSeg('motionPath', s.motion.path);
   setSeg('motionFile', s.motion.file);
   $('motion-options').classList.toggle('hidden', s.format !== 'motion');
+  const cd = s.card;
+  $('card-options').classList.toggle('hidden', s.format !== 'card');
+  $<HTMLInputElement>('card-banner').checked = !cd.noBanner;
+  $('card-band-row').classList.toggle('hidden', cd.noBanner);
+  $<HTMLInputElement>('card-band0').value = String(Math.round(cd.bannerBand[0] * 1000) / 10);
+  $<HTMLInputElement>('card-band1').value = String(Math.round(cd.bannerBand[1] * 1000) / 10);
+  $<HTMLInputElement>('card-drophue').checked = !!cd.dropHue;
+  $<HTMLInputElement>('card-winauto').checked = !cd.window;
+  $('card-win-row').classList.toggle('hidden', !cd.window);
+  const wv = cd.window ?? DEFAULT_WINDOW;
+  (['card-wx0', 'card-wy0', 'card-wx1', 'card-wy1'] as const).forEach((id, i) => { $<HTMLInputElement>(id).value = String(Math.round(wv[i] * 1000) / 10); });
+  $<HTMLInputElement>('card-ext0').value = String(cd.extend[0]);
+  $<HTMLInputElement>('card-ext1').value = String(cd.extend[1]);
+  $('card-bg-name').textContent = cardBg ? `Using “${cardBg.name}”` : 'None — the area behind the character is filled automatically.';
+  $<HTMLButtonElement>('card-bg-clear').disabled = !cardBg;
+  syncCardView();
   const sg = s.stereogram;
   $('stereogram-options').classList.toggle('hidden', s.format !== 'stereogram');
   setSeg('sgPattern', sg.pattern);
@@ -671,6 +765,7 @@ function syncUI() {
 function fileExt(s: StereoSettings): string {
   if (s.format === 'wiggle') return s.wiggleFile === 'gif' ? 'gif' : 'mp4';
   if (s.format === 'motion') return s.motion.file === 'gif' ? 'gif' : 'mp4';
+  if (s.format === 'card') return 'zip';
   if (s.format === 'mpo') return 'mpo';
   return s.exportFormat === 'jpeg' ? 'jpg' : s.exportFormat;
 }
@@ -714,6 +809,8 @@ async function loadImage(p: Promise<ImportedImage>) {
     preview.setOriginal(img.bitmap);
     sceneShown = false;
     drawSceneSwatches();
+    cardResult = null;
+    cardViewer.setLayers(null);
     const info = $('image-info');
     info.classList.remove('hidden');
     const mp = (img.image.width * img.image.height) / 1e6;
@@ -744,6 +841,25 @@ function download(blob: Blob, name: string) {
 
 async function doExport() {
   if (!current || exporting) return;
+  if (settings.format === 'card') {
+    if (!cardResult) { toast('Split the card into layers first.', true); return; }
+    exporting = true;
+    syncUI();
+    try {
+      setBusy(true, 'Packing the layers…');
+      const zip = await cardZip(cardResult);
+      const name = `${baseName(current.name)}_3d_card_layers.zip`;
+      download(zip, name);
+      toast(`Exported ${name} — frame, character, background, layers.json and a viewer.html`);
+    } catch (e) {
+      toast(`Export failed: ${(e as Error).message}`, true);
+    } finally {
+      exporting = false;
+      setBusy(false);
+      syncUI();
+    }
+    return;
+  }
   exporting = true;
   syncUI();
   try {
@@ -768,6 +884,7 @@ async function doExport() {
 /** Batch mode: apply the current settings to many photos and download a ZIP. */
 async function runBatch(files: File[]) {
   if (exporting || !files.length) return;
+  if (settings.format === 'card') { toast('Batch export is not available for Layered 3D cards — split one card at a time.', true); return; }
   exporting = true;
   syncUI();
   const list = $('batch-list');
@@ -916,6 +1033,38 @@ function bindAll() {
   const onSelect = (id: string, apply: (v: string) => void) => {
     $<HTMLSelectElement>(id).addEventListener('change', (e) => { apply((e.target as HTMLSelectElement).value); commit(); });
   };
+  // Layered 3D card
+  $('card-split').addEventListener('click', () => void runCardSplit());
+  const cardBgInput = $<HTMLInputElement>('card-bg-input');
+  cardBgInput.accept = ACCEPT_ATTR;
+  $('card-bg-add').addEventListener('click', () => cardBgInput.click());
+  cardBgInput.addEventListener('change', async () => {
+    const f = cardBgInput.files?.[0];
+    cardBgInput.value = '';
+    if (!f) return;
+    try {
+      const img = await importFile(f);
+      img.bitmap.close();
+      cardBg = { name: img.name, image: img.image };
+      syncUI();
+    } catch (e) { toast((e as Error).message, true); }
+  });
+  $('card-bg-clear').addEventListener('click', () => { cardBg = null; syncUI(); });
+  onInput('card-banner', (el) => { settings.card.noBanner = !el.checked; }, 'change');
+  onInput('card-band0', (el) => { settings.card.bannerBand[0] = clamp(num(el, 62), 0, 100) / 100; }, 'change');
+  onInput('card-band1', (el) => { settings.card.bannerBand[1] = clamp(num(el, 69.5), 0, 100) / 100; }, 'change');
+  onInput('card-drophue', (el) => { settings.card.dropHue = el.checked ? [300, 345] : null; }, 'change');
+  onInput('card-winauto', (el) => { settings.card.window = el.checked ? null : [...DEFAULT_WINDOW]; }, 'change');
+  (['card-wx0', 'card-wy0', 'card-wx1', 'card-wy1'] as const).forEach((id, i) => {
+    onInput(id, (el) => {
+      const w = settings.card.window ?? [...DEFAULT_WINDOW] as [number, number, number, number];
+      w[i] = clamp(num(el, w[i] * 100), 0, 100) / 100;
+      settings.card.window = w;
+    }, 'change');
+  });
+  onInput('card-ext0', (el) => { settings.card.extend[0] = clamp(Math.round(num(el, 100)), 0, 400); }, 'change');
+  onInput('card-ext1', (el) => { settings.card.extend[1] = clamp(Math.round(num(el, 70)), 0, 400); }, 'change');
+
   // 3D Scene
   onInput('scene-enabled', (el) => { settings.scene.enabled = el.checked; }, 'change');
   document.querySelectorAll<HTMLButtonElement>('#scene-grid .scene-card').forEach((b) => {

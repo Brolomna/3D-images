@@ -226,6 +226,11 @@
             <span class="style-name">Stereogram</span>
             <span class="style-need">Relax your eyes · hidden 3D</span>
           </button>
+          <button class="style-card" data-value="card" role="radio" aria-checked="false">
+            <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
+            <span class="style-name">Layered 3D card</span>
+            <span class="style-need">Tilt your phone · parallax card</span>
+          </button>
           <button class="style-card" data-value="wiggle" role="radio" aria-checked="false">
             <canvas class="style-thumb" width="200" height="120" aria-hidden="true"></canvas>
             <span class="style-name">Wiggle</span>
@@ -385,6 +390,35 @@
             <button data-value="gif">GIF</button>
           </div>
           <p class="hint">Uses the depth map: near parts move more than far parts. The depth panel's focus plane sets which depth stays still.</p>
+        </div>
+        <div id="card-options" class="stack hidden">
+          <p class="hint">Upload a finished card (a frame with a window, a character and a name banner). It is split into 3 layers: the still frame, the character and the background, which slide at different speeds as you tilt. The cut-out model downloads once (~115–190 MB).</p>
+          <div id="card-status" class="depth-status"></div>
+          <button id="card-split" class="btn primary wide">Split card into layers</button>
+          <span class="label">Background painting (optional, best result)</span>
+          <input id="card-bg-input" type="file" hidden />
+          <div class="row">
+            <button id="card-bg-add" class="btn small ghost">Choose painting…</button>
+            <button id="card-bg-clear" class="btn small ghost">Remove</button>
+          </div>
+          <div id="card-bg-name" class="hint"></div>
+          <label class="check"><input id="card-banner" type="checkbox" /> Card has a name banner</label>
+          <div id="card-band-row" class="row">
+            <label class="field"><span>Banner search from %</span><input id="card-band0" type="number" min="0" max="100" step="0.5" /></label>
+            <label class="field"><span>to %</span><input id="card-band1" type="number" min="0" max="100" step="0.5" /></label>
+          </div>
+          <label class="check"><input id="card-drophue" type="checkbox" /> Strip glowing pink / magenta from the outline</label>
+          <label class="check"><input id="card-winauto" type="checkbox" /> Find the window automatically</label>
+          <div id="card-win-row" class="row hidden">
+            <label class="field"><span>Window left %</span><input id="card-wx0" type="number" min="0" max="100" step="0.1" /></label>
+            <label class="field"><span>top %</span><input id="card-wy0" type="number" min="0" max="100" step="0.1" /></label>
+            <label class="field"><span>right %</span><input id="card-wx1" type="number" min="0" max="100" step="0.1" /></label>
+            <label class="field"><span>bottom %</span><input id="card-wy1" type="number" min="0" max="100" step="0.1" /></label>
+          </div>
+          <div class="row">
+            <label class="field"><span>Clothes below banner px</span><input id="card-ext0" type="number" min="0" max="400" step="5" /></label>
+            <label class="field"><span>Past the sides px</span><input id="card-ext1" type="number" min="0" max="400" step="5" /></label>
+          </div>
         </div>
         <div id="stereogram-options" class="stack hidden">
           <span class="label">Pattern</span>

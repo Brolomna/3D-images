@@ -312,6 +312,54 @@ await chooseStyle('sbs');
   await waitRender();
 }
 
+// ── 3c. Layered 3D card: split a card into frame / character / background ──
+{
+  // Procedural card: dark frame, window with a soft backdrop and a clear
+  // character (head + body), a name banner with a dark top border.
+  const W = 470, H = 836, d = new Uint8Array(W * H * 4);
+  const win = [49, 60, 421, 770];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let c = [58, 22, 24];
+    if (x >= win[0] && x < win[2] && y >= win[1] && y < win[3]) c = [40 + y / 12, 90 + x / 10, 120];
+    const head = Math.hypot(x - 235, y - 230) < 70;
+    const body = Math.abs(x - 235) < 110 - Math.max(0, 330 - y) * 0.4 && y > 290 && y < 760;
+    if (head || body) c = head ? [235, 190, 160] : [200, 60, 140];
+    if (y >= 538 && y < 545) c = [20, 8, 8];
+    if (y >= 545 && y < 620 && x > 20 && x < W - 20) c = [225, 60, 50];
+    d.set([...c, 255], (y * W + x) * 4);
+  }
+  const cardFile = join(out, 'e2e-card.png');
+  writeFileSync(cardFile, encode({ width: W, height: H, data: d, channels: 4, depth: 8 }));
+  await page.setInputFiles('#file-input', cardFile);
+  await page.waitForFunction(() => document.getElementById('image-info').textContent.includes('e2e-card'));
+  await chooseStyle('card');
+  await page.click('#card-winauto');
+  for (const [id, v] of [['#card-wx0', 49 / W * 100], ['#card-wy0', 60 / H * 100], ['#card-wx1', 421 / W * 100], ['#card-wy1', 770 / H * 100]]) {
+    await page.fill(id, String(Math.round(v * 10) / 10));
+    await page.dispatchEvent(id, 'change');
+  }
+  await page.click('#card-split');
+  await page.waitForFunction(() => /^✓|Could not/.test(document.getElementById('card-status').textContent), null, { timeout: 600000 });
+  const st = await page.textContent('#card-status');
+  check(st.startsWith('✓'), `layered 3D card split: ${st}`);
+  const box = await page.locator('.card3d').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.95, box.y + box.height * 0.5, { steps: 6 });
+  await page.waitForTimeout(600);
+  const tr = await page.evaluate(() => document.querySelector('.card3d-char').style.transform);
+  await page.mouse.up();
+  check(/translate3d\(-[1-9]/.test(tr), `dragging tilts the character layer (${tr})`);
+  await page.screenshot({ path: join(out, 'layered_card.png') });
+  const f = await exportFile();
+  const z = unzipSync(f.bytes);
+  const names = Object.keys(z).sort().join(',');
+  const info = JSON.parse(new TextDecoder().decode(z['layers.json']));
+  check(/bg\.(webp|png),char\.(webp|png),frame\.(webp|png),layers\.json,preview\.png,viewer\.html/.test(names) && info.size[0] === W,
+    `card ZIP has the 3 layers, layers.json, preview and viewer (${names})`);
+  await chooseStyle('sbs');
+}
+
 // ── 4. Batch → ZIP ──
 {
   const [dl] = await Promise.all([

@@ -4,6 +4,7 @@ import type { LayoutSpec, OutputSizeSpec, StereoFormat } from './layout';
 import type { MotionSettings } from './motion';
 import { DEFAULT_STEREOGRAM, type StereogramSettings } from './autostereogram';
 import { DEFAULT_SCENE, type SceneSettings } from './scene';
+import { DEFAULT_CARD, type CardSettings } from './cardlayers';
 import type { Interpolation } from './types';
 
 export type ShiftDirection = 1 | -1;
@@ -66,6 +67,8 @@ export interface StereoSettings {
   stereogram: StereogramSettings;
   /** 3D Scene: new depth background + subject pop (applied before every style). */
   scene: SceneSettings;
+  /** Layered 3D card (parallax) splitting options. */
+  card: CardSettings;
   /** File type for still formats (sbs, half-sbs, ou, half-ou, anaglyph). */
   exportFormat: ImageFileFormat;
   /** 0..1 quality for JPEG / WEBP / MPO. */
@@ -103,6 +106,7 @@ export const DEFAULT_SETTINGS: StereoSettings = {
   motion: { path: 'circle', amplitude: 20, durationMs: 3000, file: 'video' },
   stereogram: { ...DEFAULT_STEREOGRAM, sketch: { ...DEFAULT_STEREOGRAM.sketch } },
   scene: { ...DEFAULT_SCENE },
+  card: JSON.parse(JSON.stringify(DEFAULT_CARD)),
   exportFormat: 'png',
   exportQuality: 0.95,
 };
