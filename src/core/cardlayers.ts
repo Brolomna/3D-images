@@ -93,7 +93,7 @@ export function gaussian(v: Map1, w: number, h: number, sigma: number): Map1 {
 }
 
 /** Sub-pixel sigma: blend between identity and a 1-px box for small radii. */
-function softBlur(v: Map1, w: number, h: number, sigma: number): Map1 {
+export function softBlur(v: Map1, w: number, h: number, sigma: number): Map1 {
   if (sigma >= 1.2) return gaussian(v, w, h, sigma);
   const b = box(v, w, h, 1);
   const t = Math.min(1, sigma / 1.2);
@@ -103,7 +103,7 @@ function softBlur(v: Map1, w: number, h: number, sigma: number): Map1 {
 }
 
 /** Square min (erode) or max (dilate) filter with half-size r. */
-function morph(v: Uint8Array, w: number, h: number, r: number, max: boolean): Uint8Array {
+export function morph(v: Uint8Array, w: number, h: number, r: number, max: boolean): Uint8Array {
   const tmp = new Uint8Array(v.length), out = new Uint8Array(v.length);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     let m = max ? 0 : 1;
@@ -124,10 +124,10 @@ function morph(v: Uint8Array, w: number, h: number, r: number, max: boolean): Ui
   return out;
 }
 
-interface Component { area: number; x0: number; y0: number; x1: number; y1: number }
+export interface Component { area: number; x0: number; y0: number; x1: number; y1: number }
 
 /** 8-connected components: labels (−1 = background) and stats. */
-function components(bin: Uint8Array, w: number, h: number): { label: Int32Array; comps: Component[] } {
+export function components(bin: Uint8Array, w: number, h: number): { label: Int32Array; comps: Component[] } {
   const label = new Int32Array(bin.length).fill(-1);
   const comps: Component[] = [];
   const queue = new Int32Array(bin.length);
@@ -160,7 +160,7 @@ function median(a: number[]): number {
 }
 
 /** HSV in OpenCV's convention scaled to degrees / 0..1. */
-function hsv(img: RGBAImage) {
+export function hsv(img: RGBAImage) {
   const n = img.width * img.height;
   const hue = new Float32Array(n), sat = new Float32Array(n), val = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -261,7 +261,7 @@ function pyrDown(c: Float32Array, w: number, h: number, ch: number): { d: Float3
 }
 
 /** Bilinear resize of a multi-channel float image. */
-function resize(c: Float32Array, w: number, h: number, ch: number, W: number, H: number): Float32Array {
+export function resize(c: Float32Array, w: number, h: number, ch: number, W: number, H: number): Float32Array {
   const out = new Float32Array(W * H * ch);
   for (let y = 0; y < H; y++) {
     const sy = Math.min(h - 1, Math.max(0, ((y + 0.5) * h) / H - 0.5));
@@ -315,7 +315,7 @@ export function pushPull(rgb: Float32Array, weight: Float32Array, w: number, h: 
 }
 
 /** Deterministic normal noise (Box–Muller on a seeded PRNG). */
-function gaussNoise(n: number, sd: number, seed: number): Float32Array {
+export function gaussNoise(n: number, sd: number, seed: number): Float32Array {
   let s = seed >>> 0;
   const rnd = () => {
     s = (s + 0x6d2b79f5) >>> 0;
@@ -332,6 +332,139 @@ function gaussNoise(n: number, sd: number, seed: number): Float32Array {
     if (i + 1 < n) out[i + 1] = r * Math.sin(2 * Math.PI * v);
   }
   return out;
+}
+
+
+// ───────────────────────── layer building blocks ─────────────────────────
+
+/** The card's colours with a 0..1 alpha map. */
+export function withAlpha(card: RGBAImage, a: Float32Array): RGBAImage {
+  const out = createImage(card.width, card.height);
+  for (let i = 0; i < a.length; i++) {
+    const o = i * 4;
+    out.data[o] = card.data[o]; out.data[o + 1] = card.data[o + 1]; out.data[o + 2] = card.data[o + 2];
+    out.data[o + 3] = Math.round(Math.min(1, Math.max(0, a[i])) * 255);
+  }
+  return out;
+}
+
+/**
+ * Character layer: the card with the character's alpha, its clothes mirrored
+ * further down under the banner and past the window's sides so no cut edge
+ * shows when it slides behind the still frame.
+ */
+export function characterLayer(card: RGBAImage, alpha: Float32Array, cut: Float32Array, box: [number, number, number, number], s: CardSettings): RGBAImage {
+  const W = card.width, H = card.height;
+  const k = W / 941;
+  const [X0, , X1] = box;
+  const char = withAlpha(card, alpha);
+  const src = Uint8ClampedArray.from(char.data);
+  const down = Math.round(s.extend[0] * k), side = Math.round(s.extend[1] * k);
+  const out = char.data;
+  const px = (x: number, y: number) => (y * W + x) * 4;
+  if (!s.noBanner) {
+    for (let x = X0; x < X1; x++) {
+      const c = Math.floor(cut[x]) - 3;
+      for (let y = Math.max(0, c); y < H; y++) out.fill(0, px(x, y), px(x, y) + 4);
+      for (let kk = 1; kk < down; kk++) {
+        const ys = c - kk, yd = c + kk - 1;
+        if (ys < 0 || yd >= H) break;
+        if (yd >= 0) out.set(src.subarray(px(x, ys), px(x, ys) + 4), px(x, yd));
+      }
+    }
+  }
+  for (let kk = 1; kk < side; kk++) {
+    for (let y = 0; y < H; y++) {
+      if (X0 - kk >= 0 && X0 + kk < W) out.copyWithin(px(X0 - kk, y), px(X0 + kk, y), px(X0 + kk, y) + 4);
+      if (X1 - 1 + kk < W && X1 - 1 - kk >= 0) out.copyWithin(px(X1 - 1 + kk, y), px(X1 - 1 - kk, y), px(X1 - 1 - kk, y) + 4);
+    }
+  }
+  return char;
+}
+
+/**
+ * Frame alpha: everything but the window above the banner, plus bronze
+ * ornaments that touch the window's edge (never character pixels).
+ */
+export function frameAlpha(
+  card: RGBAImage, win: Uint8Array, above: Uint8Array,
+  c: { hue: Float32Array; sat: Float32Array; val: Float32Array },
+  alpha: Float32Array, box: [number, number, number, number],
+): Float32Array {
+  const W = card.width, H = card.height, N = W * H;
+  const k = W / 941;
+  const [X0, Y0, X1, Y1] = box;
+  const fa0 = new Float32Array(N);
+  for (let i = 0; i < N; i++) fa0[i] = !win[i] || !above[i] ? 1 : 0;
+  const ex = Math.round(70 * k), ey = Math.round(90 * k);
+  const orn = new Uint8Array(N);
+  for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
+    const i = y * W + x;
+    const inner = y >= Y0 + ey && y < Y1 - ey && x >= X0 + ex && x < X1 - ex;
+    const bronze = c.hue[i] > 12 && c.hue[i] < 48 && c.sat[i] > 0.25 && c.val[i] > 0.32;
+    // Ornaments are frame, never character (fur or clothes can look bronze).
+    if (bronze && !inner && above[i] && alpha[i] < 0.5) orn[i] = 1;
+  }
+  const ornD = morph(orn, W, H, 2, true);
+  const oc = components(ornD, W, H);
+  const touching = oc.comps.map((cc) => cc.x0 <= X0 + 3 || cc.y0 <= Y0 + 3 || cc.x1 + 1 >= X1 - 3);
+  for (let i = 0; i < N; i++) if (oc.label[i] >= 0 && touching[oc.label[i]]) fa0[i] = 1;
+  return softBlur(fa0, W, H, 0.7);
+}
+
+/** Area to fill behind moving layers: dilated layer alpha + the frame's parts inside the window. */
+export function behindHole(alpha: Float32Array, fa: Float32Array, win: Uint8Array, W: number, H: number, k: number): Float32Array {
+  const N = W * H;
+  const holeB = new Uint8Array(N);
+  for (let i = 0; i < N; i++) holeB[i] = alpha[i] > 0.03 ? 1 : 0;
+  const holeD = morph(holeB, W, H, Math.max(1, Math.round(8 * k)), true);
+  const hole = new Float32Array(N);
+  for (let i = 0; i < N; i++) hole[i] = Math.max(holeD[i], fa[i] > 0.5 && win[i] ? 1 : 0);
+  return hole;
+}
+
+/**
+ * Background layer: the window with the `hole` area filled by a smooth
+ * push-pull fill plus grain, carried on past the window's edges.
+ */
+export function fillBehind(card: RGBAImage, hole: Float32Array, win: Uint8Array, box: [number, number, number, number]): RGBAImage {
+  const W = card.width, H = card.height, N = W * H;
+  const k = W / 941;
+  const [X0, Y0, X1, Y1] = box;
+  const known = new Float32Array(N);
+  for (let i = 0; i < N; i++) known[i] = (1 - hole[i]) * win[i];
+  const f = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) for (let q = 0; q < 3; q++) f[i * 3 + q] = card.data[i * 4 + q] * known[i];
+  const fill = pushPull(f, known, W, H);
+  const grain = gaussNoise(N, 6, 3);
+  const soft = gaussian(hole, W, H, 4);
+  const res = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) for (let q = 0; q < 3; q++) {
+    res[i * 3 + q] = card.data[i * 4 + q] * (1 - soft[i]) + (fill[i * 3 + q] + grain[i]) * soft[i];
+  }
+  // Carry the window's content past its edges (replicate, then blur outside).
+  const full = new Float32Array(N * 3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const sx = Math.min(X1 - 1, Math.max(X0, x)), sy = Math.min(Y1 - 1, Math.max(Y0, y));
+    for (let q = 0; q < 3; q++) full[(y * W + x) * 3 + q] = res[(sy * W + sx) * 3 + q];
+  }
+  const blurred = new Float32Array(N * 3);
+  for (let q = 0; q < 3; q++) {
+    const chn = new Float32Array(N);
+    for (let i = 0; i < N; i++) chn[i] = full[i * 3 + q];
+    const b = gaussian(chn, W, H, 18 * k);
+    for (let i = 0; i < N; i++) blurred[i * 3 + q] = b[i];
+  }
+  const ins0 = new Float32Array(N);
+  for (let i = 0; i < N; i++) ins0[i] = win[i];
+  const ins = gaussian(ins0, W, H, 6 * k);
+  const bg = createImage(W, H);
+  for (let i = 0; i < N; i++) {
+    const o = i * 4;
+    for (let q = 0; q < 3; q++) bg.data[o + q] = win[i] ? res[i * 3 + q] : full[i * 3 + q] * ins[i] + blurred[i * 3 + q] * (1 - ins[i]);
+    bg.data[o + 3] = 255;
+  }
+  return bg;
 }
 
 // ───────────────────────── the split ─────────────────────────
@@ -384,108 +517,12 @@ export function splitCard(
   for (let i = 0; i < N; i++) a0[i] = Math.min(1, m[i]) * hard[i];
   const alpha = softBlur(a0, W, H, 0.8);
 
-  // Character layer with continued clothes.
-  const char = createImage(W, H);
-  for (let i = 0; i < N; i++) {
-    const o = i * 4;
-    char.data[o] = card.data[o]; char.data[o + 1] = card.data[o + 1]; char.data[o + 2] = card.data[o + 2];
-    char.data[o + 3] = Math.round(alpha[i] * 255);
-  }
-  const src = Uint8ClampedArray.from(char.data);
-  const down = Math.round(s.extend[0] * k), side = Math.round(s.extend[1] * k);
-  const out = char.data;
-  const px = (x: number, y: number) => (y * W + x) * 4;
-  if (!s.noBanner) {
-    for (let x = X0; x < X1; x++) {
-      const c = Math.floor(cut[x]) - 3;
-      for (let y = Math.max(0, c); y < H; y++) out.fill(0, px(x, y), px(x, y) + 4);
-      for (let kk = 1; kk < down; kk++) {
-        const ys = c - kk, yd = c + kk - 1;
-        if (ys < 0 || yd >= H) break;
-        if (yd >= 0) out.set(src.subarray(px(x, ys), px(x, ys) + 4), px(x, yd));
-      }
-    }
-  }
-  for (let kk = 1; kk < side; kk++) {
-    for (let y = 0; y < H; y++) {
-      if (X0 - kk >= 0 && X0 + kk < W) out.copyWithin(px(X0 - kk, y), px(X0 + kk, y), px(X0 + kk, y) + 4);
-      if (X1 - 1 + kk < W && X1 - 1 - kk >= 0) out.copyWithin(px(X1 - 1 + kk, y), px(X1 - 1 - kk, y), px(X1 - 1 - kk, y) + 4);
-    }
-  }
-
-  // Frame layer: everything but the window above the banner, plus ornaments
-  // that touch the window's edge.
-  const fa0 = new Float32Array(N);
-  for (let i = 0; i < N; i++) fa0[i] = !win[i] || !above[i] ? 1 : 0;
-  const ex = Math.round(70 * k), ey = Math.round(90 * k);
-  const orn = new Uint8Array(N);
-  for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
-    const i = y * W + x;
-    const inner = y >= Y0 + ey && y < Y1 - ey && x >= X0 + ex && x < X1 - ex;
-    const bronze = hue[i] > 12 && hue[i] < 48 && sat[i] > 0.25 && val[i] > 0.32;
-    // Ornaments are frame, never character (fur or clothes can look bronze).
-    if (bronze && !inner && above[i] && alpha[i] < 0.5) orn[i] = 1;
-  }
-  const ornD = morph(orn, W, H, 2, true);
-  const oc = components(ornD, W, H);
-  const touching = oc.comps.map((c) => c.x0 <= X0 + 3 || c.y0 <= Y0 + 3 || c.x1 + 1 >= X1 - 3);
-  for (let i = 0; i < N; i++) if (oc.label[i] >= 0 && touching[oc.label[i]]) fa0[i] = 1;
-  const fa = softBlur(fa0, W, H, 0.7);
-  const frame = createImage(W, H);
-  for (let i = 0; i < N; i++) {
-    const o = i * 4;
-    frame.data[o] = card.data[o]; frame.data[o + 1] = card.data[o + 1]; frame.data[o + 2] = card.data[o + 2];
-    frame.data[o + 3] = Math.round(fa[i] * 255);
-  }
-
-  // Background layer.
-  let bg: RGBAImage;
+  const box: [number, number, number, number] = [X0, Y0, X1, Y1];
+  const char = characterLayer(card, alpha, cut, box, s);
+  const fa = frameAlpha(card, win, above, { hue, sat, val }, alpha, box);
+  const frame = withAlpha(card, fa);
   const ownBackground = !!ownBg;
-  if (ownBg) {
-    bg = ownBg;
-  } else {
-    const holeB = new Uint8Array(N);
-    for (let i = 0; i < N; i++) holeB[i] = alpha[i] > 0.03 ? 1 : 0;
-    const holeD = morph(holeB, W, H, Math.max(1, Math.round(8 * k)), true);
-    const hole = new Float32Array(N), known = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
-      hole[i] = Math.max(holeD[i], fa[i] > 0.5 && win[i] ? 1 : 0);
-      known[i] = (1 - hole[i]) * win[i];
-    }
-    const f = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) for (let q = 0; q < 3; q++) f[i * 3 + q] = card.data[i * 4 + q] * known[i];
-    const fill = pushPull(f, known, W, H);
-    const grain = gaussNoise(N, 6, 3);
-    const soft = gaussian(hole, W, H, 4);
-    const res = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) for (let q = 0; q < 3; q++) {
-      res[i * 3 + q] = card.data[i * 4 + q] * (1 - soft[i]) + (fill[i * 3 + q] + grain[i]) * soft[i];
-    }
-    // Carry the window's content past its edges (replicate, then blur outside).
-    const full = new Float32Array(N * 3);
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const sx = Math.min(X1 - 1, Math.max(X0, x)), sy = Math.min(Y1 - 1, Math.max(Y0, y));
-      for (let q = 0; q < 3; q++) full[(y * W + x) * 3 + q] = res[(sy * W + sx) * 3 + q];
-    }
-    const blurred = new Float32Array(N * 3);
-    for (let q = 0; q < 3; q++) {
-      const chn = new Float32Array(N);
-      for (let i = 0; i < N; i++) chn[i] = full[i * 3 + q];
-      const b = gaussian(chn, W, H, 18 * k);
-      for (let i = 0; i < N; i++) blurred[i * 3 + q] = b[i];
-    }
-    const ins0 = new Float32Array(N);
-    for (let i = 0; i < N; i++) ins0[i] = win[i];
-    const ins = gaussian(ins0, W, H, 6 * k);
-    bg = createImage(W, H);
-    for (let i = 0; i < N; i++) {
-      const o = i * 4;
-      for (let q = 0; q < 3; q++) {
-        bg.data[o + q] = win[i] ? res[i * 3 + q] : full[i * 3 + q] * ins[i] + blurred[i * 3 + q] * (1 - ins[i]);
-      }
-      bg.data[o + 3] = 255;
-    }
-  }
+  const bg = ownBg ?? fillBehind(card, behindHole(alpha, fa, win, W, H, k), win, box);
 
   let cmin = Infinity, cmax = -Infinity;
   for (let x = 0; x < W; x++) { cmin = Math.min(cmin, cut[x]); cmax = Math.max(cmax, cut[x]); }

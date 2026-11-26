@@ -693,3 +693,108 @@ describe('More downloads', () => {
     expect(p.getDepth()!.normalized).toBe(false);
   }, 30000);
 });
+
+import { autoStack, magicSelect, manualStack, MOTION_FAR, MOTION_NEAR, stackToPaint } from '../src/core/cardstack';
+
+describe('Card splitter modes', () => {
+  // 300 × 500 card: frame, window (40,50)-(260,450), banner from y = 330,
+  // a "tree" at middle depth (x 200–250) and a near round character.
+  function scene() {
+    const W = 300, H = 500;
+    const img = createImage(W, H);
+    const depth: DepthMap = { width: W, height: H, data: new Float32Array(W * H) };
+    const isChar = (x: number, y: number) => Math.hypot(x - 130, y - 220) < 60 || (x >= 100 && x < 160 && y >= 220 && y < 326);
+    const isTree = (x: number, y: number) => x >= 200 && x < 250 && y >= 120 && y < 320;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      let c = [58, 22, 24], d = 0.1;
+      if (x >= 40 && x < 260 && y >= 50 && y < 450) { c = [60, 110, 150]; d = 0.15; }
+      if (isTree(x, y)) { c = [40, 140, 60]; d = 0.55; }
+      if (isChar(x, y)) { c = [230, 200, 180]; d = 0.95; }
+      if (y >= 326 && y < 330) c = [20, 8, 8];
+      if (y >= 330 && y < 380) c = [230, 60, 50];
+      img.data.set([...c, 255], i * 4);
+      depth.data[i] = d;
+    }
+    const matte = (w: [number, number, number, number]) => {
+      const cw = w[2] - w[0], ch = w[3] - w[1];
+      const m = new Float32Array(cw * ch);
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) m[y * cw + x] = isChar(x + w[0], y + w[1]) ? 1 : 0;
+      return m;
+    };
+    return { img, depth, matte, W, isChar, isTree };
+  }
+  const cs = { ...DEFAULT_CARD, window: [40 / 300, 50 / 500, 260 / 300, 450 / 500] as [number, number, number, number], bannerBand: [0.6, 0.7] as [number, number], extend: [30, 20] as [number, number] };
+  const a = (l: RGBAImage, x: number, y: number) => l.data[(y * l.width + x) * 4 + 3];
+
+  it('Auto: character from matte + depth, still frame, movement by depth', () => {
+    const { img, depth, matte } = scene();
+    const box: [number, number, number, number] = [40, 50, 260, 450];
+    const st = autoStack(img, matte(box), depth, cs, { threshold: null, extraLayers: 0 }, null);
+    expect(st.source).toBe('matte+depth');
+    expect(st.layers.map((l) => l.role)).toEqual(['bg', 'char', 'frame']);
+    const [bg, char, frame] = st.layers;
+    expect(a(char.image, 130, 220)).toBe(255);
+    expect(a(char.image, 225, 200)).toBe(0); // the tree is not character
+    expect(a(frame.image, 150, 150)).toBe(0);
+    expect(frame.still).toBe(true);
+    expect(bg.motion).toEqual(MOTION_FAR);
+    expect(char.motion).toEqual(MOTION_NEAR);
+    expect(st.threshold).toBeGreaterThan(0);
+    expect(st.threshold).toBeLessThan(1);
+  });
+
+  it('Auto falls back to depth alone or the matte alone', () => {
+    const { img, depth, matte } = scene();
+    const box: [number, number, number, number] = [40, 50, 260, 450];
+    const d = autoStack(img, null, depth, cs, { threshold: 0.8, extraLayers: 0 }, null);
+    expect(d.source).toBe('depth');
+    expect(a(d.layers[1].image, 130, 220)).toBe(255);
+    const m = autoStack(img, matte(box), null, cs, { threshold: null, extraLayers: 0 }, null);
+    expect(m.source).toBe('matte');
+    expect(m.threshold).toBeNull();
+    expect(() => autoStack(img, null, null, cs, { threshold: null, extraLayers: 0 }, null)).toThrow();
+  });
+
+  it('Auto: an extra depth layer takes the mid-distance tree and moves in between', () => {
+    const { img, depth, matte } = scene();
+    const st = autoStack(img, matte([40, 50, 260, 450]), depth, cs, { threshold: null, extraLayers: 1 }, null);
+    expect(st.layers.map((l) => l.role)).toEqual(['bg', 'mid', 'char', 'frame']);
+    const mid = st.layers[1];
+    expect(a(mid.image, 225, 200)).toBeGreaterThan(200);
+    expect(a(mid.image, 80, 100)).toBe(0);
+    expect(mid.motion.x).toBeLessThan(MOTION_FAR.x);
+    expect(mid.motion.x).toBeGreaterThan(MOTION_NEAR.x);
+  });
+
+  it('Manual: builds layers from painted masks; magic select grabs a region', () => {
+    const { img, depth, isChar } = scene();
+    const W = 300, H = 500;
+    const charMask = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (isChar(x, y)) charMask[y * W + x] = 255;
+    const frameMask = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (!(x >= 40 && x < 260 && y >= 50 && y < 326)) frameMask[y * W + x] = 255;
+    const st = manualStack(img, [
+      { id: 'bg', name: 'Background', role: 'bg', still: false, mask: new Uint8Array(W * H) },
+      { id: 'char', name: 'Character', role: 'char', still: false, mask: charMask },
+      { id: 'frame', name: 'Frame', role: 'frame', still: true, mask: frameMask },
+    ], W, H, depth, cs);
+    expect(st.mode).toBe('manual');
+    expect(a(st.layers[1].image, 130, 220)).toBe(255);
+    expect(a(st.layers[2].image, 10, 10)).toBe(255);
+    expect(st.layers[2].motion).toEqual({ x: 0, y: 0 });
+    const bgPx = px(st.layers[0].image, 130, 220);
+    expect(bgPx[3]).toBe(255);
+    expect(bgPx[2]).toBeGreaterThan(bgPx[0]); // filled with the blue behind, not the character
+    // Magic select on the tree.
+    const sel = magicSelect(img, depth.data, 225, 200, 0.3);
+    expect(sel[200 * W + 225]).toBe(255);
+    expect(sel[200 * W + 245]).toBe(255);
+    expect(sel[200 * W + 130]).toBe(0);
+    // Auto → paint masks round trip.
+    const auto = autoStack(img, null, depth, cs, { threshold: 0.8, extraLayers: 0 }, null);
+    const paint = stackToPaint(auto, 150, 250);
+    expect(paint.map((p) => p.role)).toEqual(['bg', 'char', 'frame']);
+    expect(paint[1].mask[110 * 150 + 65]).toBeGreaterThan(200);
+  });
+});
