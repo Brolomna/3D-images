@@ -3,7 +3,7 @@ import type { SceneSettings } from '../core/scene';
 import type { StereoSettings } from '../core/settings';
 
 /** depth: depth maps · views: left/right · frames: wiggle/motion frames · all: everything for the style. */
-export type PartsKind = 'depth' | 'views' | 'frames' | 'all';
+export type PartsKind = 'depthmap' | 'depth' | 'views' | 'frames' | 'all';
 
 export interface RawDepth { width: number; height: number; buffer: ArrayBuffer }
 

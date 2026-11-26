@@ -196,6 +196,12 @@ async function buildParts(s: StereoSettings, kind: PartsKind, progress: (stage: 
     files.push(png('left.png', r.left), png('right.png', r.right));
     if (all && s.format !== 'wiggle' && s.format !== 'mpo') files.push(png(`output_${s.format}.png`, p.render(s, 1).output));
   }
+  if (kind === 'depthmap') {
+    progress('Preparing the depth map…');
+    const framed = p.framedDepth(s, 1);
+    if (!framed) throw new Error('The depth map is not ready yet.');
+    files.push(depthPng('depth_map.png', framed));
+  }
   if (kind === 'depth' || all) {
     progress('Preparing the depth maps…');
     const framed = p.framedDepth(s, 1);

@@ -872,7 +872,7 @@ function syncUI() {
   $<HTMLButtonElement>('btn-export').disabled = !has || exporting;
   $<HTMLButtonElement>('btn-export-top').disabled = !has || exporting;
   $<HTMLButtonElement>('btn-batch').disabled = exporting;
-  for (const id of ['dl-depth', 'dl-views', 'dl-frames', 'dl-parts']) $<HTMLButtonElement>(id).disabled = !has || exporting;
+  for (const id of ['dl-depth-map', 'dl-depth', 'dl-views', 'dl-frames', 'dl-parts']) $<HTMLButtonElement>(id).disabled = !has || exporting;
   $('dl-frames').classList.toggle('hidden', s.format !== 'wiggle' && s.format !== 'motion');
   $('dl-frames').textContent = s.format === 'motion' ? `Motion frames as pictures (${motionTiming(s.motion).count})` : `Wiggle frames as pictures (${s.wiggleFrames})`;
   $('dl-hint').textContent = partsHint(s);
@@ -1014,12 +1014,12 @@ async function doExport() {
 }
 
 /** "More downloads": the pictures behind the current style as separate files. */
-async function downloadParts(kind: 'depth' | 'views' | 'frames' | 'all') {
+async function downloadParts(kind: 'depthmap' | 'depth' | 'views' | 'frames' | 'all') {
   if (!current || exporting) return;
   exporting = true;
   syncUI();
   try {
-    const needsDepth = kind === 'depth' || kind === 'all' || settings.format === 'motion' || settings.format === 'stereogram' || settings.scene.enabled;
+    const needsDepth = kind === 'depthmap' || kind === 'depth' || kind === 'all' || settings.format === 'motion' || settings.format === 'stereogram' || settings.scene.enabled;
     if (needsDepth && depthState.kind !== 'ready') {
       setBusy(true, 'Waiting for depth analysis…');
       const map = await ensureDepth();
@@ -1038,7 +1038,7 @@ async function downloadParts(kind: 'depth' | 'views' | 'frames' | 'all') {
     } else {
       const entries: Record<string, [Uint8Array, { level: 0 | 6 }]> = {};
       for (const f of files) entries[f.name] = [f.bytes, { level: /\.(png|webp|jpe?g)$/.test(f.name) ? 0 : 6 }];
-      const label = { depth: 'depth_maps', views: 'views', frames: 'frames', all: 'parts' }[kind];
+      const label = { depthmap: 'depth_map', depth: 'depth_maps', views: 'views', frames: 'frames', all: 'parts' }[kind];
       const name = `${base}_3d_${label}.zip`;
       download(new Blob([zipSync(entries) as BlobPart], { type: 'application/zip' }), name);
       toast(`Downloaded ${name} (${files.length} files)`);
@@ -1405,6 +1405,7 @@ function bindAll() {
 
   $('btn-export').addEventListener('click', () => void doExport());
   $('dl-depth').addEventListener('click', () => void downloadParts('depth'));
+  $('dl-depth-map').addEventListener('click', () => void downloadParts('depthmap'));
   $('dl-views').addEventListener('click', () => void downloadParts('views'));
   $('dl-frames').addEventListener('click', () => void downloadParts('frames'));
   $('dl-parts').addEventListener('click', () => void downloadParts('all'));
