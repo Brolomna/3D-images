@@ -358,7 +358,23 @@ input[type='range'] { width: 100%; accent-color: var(--accent); height: 22px; ma
 .card3d-win { position: absolute; overflow: hidden; }
 .card3d-bg { width: 124%; height: 118%; left: -12%; top: -9%; object-fit: cover; will-change: transform; }
 .card3d-char { filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.55)); will-change: transform; }
-.card3d-frame { inset: 0; width: 100%; height: 100%; }
+.card3d-top { inset: 0; width: 100%; height: 100%; }
+.card3d-layer { will-change: transform; }
 .card-viewer .card3d-msg { color: var(--muted); text-align: center; max-width: 320px; padding: 16px; }
 .busy, .pixel-readout { z-index: 3; }
 .card3d-motion[hidden], .card3d-msg[hidden] { display: none !important; }
+
+/* Manual card editor */
+.card-editor { position: absolute; inset: 0; background: #0b0c0f; z-index: 2; touch-action: none; cursor: crosshair; }
+.card-editor[hidden] { display: none; }
+.card-editor canvas { width: 100%; height: 100%; display: block; }
+.layer-list { display: grid; gap: 4px; }
+.layer-item {
+  display: grid; grid-template-columns: 16px 1fr auto auto; gap: 8px; align-items: center;
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); cursor: pointer; font-size: 12px;
+}
+.layer-item[aria-checked='true'] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.layer-item .sw { width: 14px; height: 14px; border-radius: 3px; }
+.layer-item label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
+.layer-item button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
+@media (max-width: 900px) { .layer-item { padding: 9px 10px; font-size: 13px; } }

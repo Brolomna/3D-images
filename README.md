@@ -99,25 +99,44 @@ Turn any photo into a staged 3D scene. It applies before every 3D style.
 4. **Options:** background depth, subject pop, separation, edge softness, subject threshold, a soft shadow and "New variation".
 
 ### Layered 3D card (parallax)
-For finished card art: a painted frame with a window, a character in the window, and a name banner. The card is split into three same-size layers that stack exactly. In the live preview the background and the character slide at different speeds behind the still frame as you tilt your phone (gyroscope) or drag. *Turn on motion* asks for iPhone motion permission, and tapping re-centres the card.
+For finished card art: a painted frame with a window, a character in the window, and a name banner. The card is split into same-size layers that stack exactly. In the live preview each layer slides by its own amount behind the still frame as you tilt your phone (gyroscope) or drag. *Turn on motion* asks for iPhone motion permission, and tapping re-centres the card.
 
-- **frame:** the card with the window made transparent. It keeps the border, bronze ornaments touching the window's edge, and everything from the banner down.
-- **char:** the character, cut out by **BiRefNet_lite** (MIT), only inside the window and above the banner. Its clothes are mirrored a little further under the banner and past the window's sides, so no cut edge shows when it slides.
-- **bg:** your own background painting (best result), or the window with the character's area filled by a push-pull fill plus grain, carried past the window's edges.
+Two modes, chosen with a toggle at the top:
 
-**Where the model runs:** in the browser, in a worker (ONNX Runtime Web), cached after the first download.
-- With **WebGPU**, the 1024 px model at half precision (115 MB).
-- Otherwise the 512 px export (192 MB, about 25 s per card on a laptop CPU), whose edges are then sharpened against the photo.
+**✨ Auto (smart detection)**
+- **Frame (still):** the card rules. Everything outside the window, the banner from its detected top edge down, and bronze ornaments joined to the window's edges.
+- **Inside the window, pixels are sorted by depth** (the app's depth map, normalised within the window), together with the **BiRefNet_lite** cut-out (MIT).
+  - The character is what is nearer than the threshold *and* confirmed by the cut-out.
+  - The depth trims stray bits and fills holes; the largest piece is kept and its edges softened.
+  - The **threshold** defaults to the split between the two main depth groups (Otsu), and a slider changes it with a live preview.
+- **Extra depth layers (0–2)** split the rest into far and middle layers (for example trees or buildings) with 1-D k-means on depth.
+- **Movement follows each layer's average depth:** background 8 % / 6 %, character 4 % / 2.4 %, middle layers in between, frame still.
+- **Clean-up and fallbacks:**
+  - The area behind is filled with push-pull, and the clothes continue under the frame (mirrored).
+  - Without a depth map Auto uses the cut-out alone; without the cut-out model it uses depth alone.
+  - The cut-out is computed once per card, so threshold and layer changes re-split in about 2 s.
 
-The 1024 px model needs about 6.7 GB of working memory, more than a browser allows without a GPU.
+**✏️ Manual (highlight)**
+- Paint one colour per layer: Background, Character, Frame, plus **+ Add layer**. Painting a layer takes those pixels from the others, and unpainted areas are background.
+- **Brush tools:** adjustable size and softness, an eraser, and **✨ magic select**, where a tap grows a region of similar colour and depth.
+- **Editing:** undo/redo, two-finger pinch zoom and pan (wheel or middle-drag on desktop), and a "still" toggle per layer.
+- **Start from Auto** loads Auto's result as the starting masks for hand fixes.
+- Masks are feathered by about 1.5 px, and the background is filled behind moving layers.
 
-**Options:** background painting, banner on/off and search band, strip a glowing pink/magenta from the outline, automatic or manual window, and how far the clothes continue.
+**Both modes**
+- **Live tilt preview.**
+- **ZIP download:**
+  - card-size transparent images: `bg`, `char` and `frame` (the names Howlfall's pack editor expects), plus `layer_<id>` for extra layers. They're WebP, or PNG where WebP can't be encoded;
+  - `layers.json`: the window `win {x,y,w,h}` plus each layer's file, role, still flag, movement and depth;
+  - `preview.png`;
+  - a standalone `viewer.html`.
+- **Cut-out model:**
+  - With **WebGPU**, the 1024 px model at half precision (115 MB).
+  - Otherwise the 512 px export (192 MB, about 25 s for the first split on a laptop CPU), with its edges sharpened against the photo.
+  - Cached after the first download. Everything runs in the browser; the art is never uploaded.
+- **Options:** your own background painting, banner on/off and search band, strip a glowing pink/magenta from the outline, an automatic or manual window, and how far the clothes continue.
 
-**Download:** a ZIP with `frame`, `char` and `bg` (WebP, or PNG where WebP can't be encoded), `layers.json` (the window as fractions of the card), `preview.png`, and a standalone `viewer.html` that tilts the card on any phone.
-
-This is a browser port of Howlfall's `tools/card_layers.py`. Changes from the original:
-- The background fill reduces all the way down, so very large holes get colour.
-- Character pixels are never taken for frame ornaments.
+This is a browser port and extension of Howlfall's `tools/card_layers.py`.
 
 ### Stereograms (Magic Eye style)
 Autostereograms like the classic *Magic Eye* prints repeat a texture strip across the image.
@@ -197,7 +216,7 @@ depth model ─► normalise/smooth ─► depth frame aligned with the base (ca
 | — | Depth estimation | `depth/depth.worker.ts`, `depth/client.ts` |
 | 7 | Composition engine (all formats) | `core/compose.ts`, `core/formats.ts` |
 | 8 | Preview renderer | `ui/preview.ts` |
-| — | Layered 3D card | `core/cardlayers.ts` (split), `card/card.worker.ts` (BiRefNet_lite via ONNX Runtime Web), `card/viewer.ts` (tilt viewer), `card/export.ts` (ZIP + standalone viewer) |
+| — | Layered 3D card | `core/cardlayers.ts` (card rules, fills), `core/cardstack.ts` (Auto / Manual layer stacks, magic select), `card/card.worker.ts` (BiRefNet_lite via ONNX Runtime Web), `card/editor.ts` (paint editor), `card/viewer.ts` (tilt viewer), `card/export.ts` (ZIP + standalone viewer) |
 | — | 3D Scene | `core/scene.ts` (backgrounds, guided-filter matting, compositing), `io/backgrounds.ts` (saved backgrounds) |
 | 9 | Export engine | `worker/stereo.worker.ts`, `worker/video.ts`, `core/encode.ts`, `core/gif.ts`, `core/mpo.ts` |
 | — | 3D photo motion | `core/motion.ts` (2-pass depth warp: horizontal, then vertical via transposition) |

@@ -357,6 +357,30 @@ await chooseStyle('sbs');
   const info = JSON.parse(new TextDecoder().decode(z['layers.json']));
   check(/bg\.(webp|png),char\.(webp|png),frame\.(webp|png),layers\.json,preview\.png,viewer\.html/.test(names) && info.size[0] === W,
     `card ZIP has the 3 layers, layers.json, preview and viewer (${names})`);
+  // ✨ Auto with an extra depth layer: re-splits live (cut-out reused).
+  await page.click('.seg[data-setting="cardExtra"] button[data-value="1"]');
+  await page.waitForTimeout(500);
+  await page.waitForFunction(() => /^✓|Could not/.test(document.getElementById('card-status').textContent), null, { timeout: 120000 });
+  const st2 = await page.textContent('#card-status');
+  check(/^✓ \d+ layers/.test(st2), `auto with an extra depth layer: ${st2}`);
+  // ✏️ Manual: paint the character, build, export.
+  await page.click('.seg[data-setting="cardMode"] button[data-value="manual"]');
+  await page.waitForTimeout(400);
+  const eb = await page.locator('.card-editor').boundingBox();
+  await page.mouse.move(eb.x + eb.width * 0.5, eb.y + eb.height * 0.3);
+  await page.mouse.down();
+  await page.mouse.move(eb.x + eb.width * 0.5, eb.y + eb.height * 0.5, { steps: 8 });
+  await page.mouse.up();
+  await page.click('#card-build');
+  await page.waitForTimeout(300);
+  await page.waitForFunction(() => /^✓|Could not/.test(document.getElementById('card-status').textContent), null, { timeout: 120000 });
+  const st3 = await page.textContent('#card-status');
+  const mf = await exportFile();
+  const mz = unzipSync(mf.bytes);
+  const minfo = JSON.parse(new TextDecoder().decode(mz['layers.json']));
+  check(/painting/.test(st3) && minfo.mode === 'manual' && minfo.layers.some((l) => l.role === 'frame' && l.still) && (!!mz['char.webp'] || !!mz['char.png']),
+    `manual paint → build → export (${minfo.layers.map((l) => `${l.file}:${l.motion.x}`).join(' ')})`);
+  await page.click('.seg[data-setting="cardMode"] button[data-value="auto"]');
   await chooseStyle('sbs');
 }
 

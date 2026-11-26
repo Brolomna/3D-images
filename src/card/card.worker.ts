@@ -7,7 +7,9 @@
  */
 import * as ort from 'onnxruntime-web/webgpu';
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
-import { splitCard } from '../core/cardlayers';
+import { findWindow } from '../core/cardlayers';
+import { autoStack, manualStack, type CardStack } from '../core/cardstack';
+import type { DepthMap } from '../core/depth';
 import type { RGBAImage } from '../core/types';
 import { guidedFilter } from '../core/scene';
 import { CARD_MODELS, type CardModel, type CardRequest, type CardResponse } from './protocol';
@@ -188,25 +190,57 @@ async function matte(crop: RGBAImage, id: number): Promise<{ m: Float32Array; mo
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/** Cut-out mattes per card (the model is the slow part; threshold changes reuse it). */
+const matteCache = new Map<string, { m: Float32Array | null; model: string | null }>();
+
+const img = (r: { width: number; height: number; buffer: ArrayBuffer }): RGBAImage => ({ width: r.width, height: r.height, data: new Uint8ClampedArray(r.buffer) });
+const dmap = (r: { width: number; height: number; buffer: ArrayBuffer } | null): DepthMap | null => (r ? { width: r.width, height: r.height, data: new Float32Array(r.buffer) } : null);
+
+function sendStack(id: number, t0: number, model: string | null, stack: CardStack) {
+  const transfer: Transferable[] = [];
+  const layers = stack.layers.map((l) => {
+    const data = l.image.data.slice();
+    transfer.push(data.buffer);
+    return { id: l.id, name: l.name, role: l.role, still: l.still, motion: l.motion, depth: l.depth, image: { width: l.image.width, height: l.image.height, buffer: data.buffer as ArrayBuffer } };
+  });
+  post({ type: 'stack', id, ms: performance.now() - t0, model, stack: { ...stack, layers } }, transfer);
+}
+
 ctx.onmessage = async (ev: MessageEvent<CardRequest>) => {
   const msg = ev.data;
-  if (msg.type !== 'split') return;
+  const t0 = performance.now();
   try {
-    const t0 = performance.now();
-    const card: RGBAImage = { width: msg.card.width, height: msg.card.height, data: new Uint8ClampedArray(msg.card.buffer) };
-    const bg = msg.bg ? { width: msg.bg.width, height: msg.bg.height, data: new Uint8ClampedArray(msg.bg.buffer) } : null;
-    // Run the model on the window crop first (async), then the synchronous split.
-    const { findWindow } = await import('../core/cardlayers');
-    const win = findWindow(card, msg.settings.window);
-    const [x0, y0, x1, y1] = win;
-    const crop: RGBAImage = { width: x1 - x0, height: y1 - y0, data: new Uint8ClampedArray((x1 - x0) * (y1 - y0) * 4) };
-    for (let y = y0; y < y1; y++) crop.data.set(card.data.subarray((y * card.width + x0) * 4, (y * card.width + x1) * 4), (y - y0) * (x1 - x0) * 4);
-    const { m, model } = await matte(crop, msg.id);
-    post({ type: 'progress', id: msg.id, stage: 'Building the layers' });
-    const layers = splitCard(card, () => m, msg.settings, bg);
-    const raw = (img: RGBAImage) => ({ width: img.width, height: img.height, buffer: img.data.buffer as ArrayBuffer });
-    const frame = raw(layers.frame), char = raw(layers.char), bgOut = raw(layers.bg === bg ? { ...bg!, data: bg!.data.slice() } : layers.bg);
-    post({ type: 'done', id: msg.id, ms: performance.now() - t0, model, frame, char, bg: bgOut, info: layers.info }, [frame.buffer, char.buffer, bgOut.buffer]);
+    if (msg.type === 'auto') {
+      const card = img(msg.card);
+      const bg = msg.bg ? img(msg.bg) : null;
+      const depth = dmap(msg.depth);
+      const win = findWindow(card, msg.settings.window);
+      const key = `${msg.key}|${win.join(',')}`;
+      let cached = matteCache.get(key);
+      if (!cached) {
+        const [x0, y0, x1, y1] = win;
+        const crop: RGBAImage = { width: x1 - x0, height: y1 - y0, data: new Uint8ClampedArray((x1 - x0) * (y1 - y0) * 4) };
+        for (let y = y0; y < y1; y++) crop.data.set(card.data.subarray((y * card.width + x0) * 4, (y * card.width + x1) * 4), (y - y0) * (x1 - x0) * 4);
+        try {
+          const r = await matte(crop, msg.id);
+          cached = { m: r.m, model: r.model };
+        } catch (e) {
+          // No cut-out model here: fall back to the depth map alone.
+          if (!depth) throw e;
+          post({ type: 'progress', id: msg.id, stage: 'Cut-out model unavailable — using depth only' });
+          cached = { m: null, model: null };
+        }
+        matteCache.clear(); // keep one card's matte
+        matteCache.set(key, cached);
+      }
+      post({ type: 'progress', id: msg.id, stage: 'Building the layers' });
+      sendStack(msg.id, t0, cached.model, autoStack(card, cached.m, depth, msg.settings, msg.auto, bg));
+    } else if (msg.type === 'manual') {
+      const card = img(msg.card);
+      post({ type: 'progress', id: msg.id, stage: 'Building the layers' });
+      const paint = msg.layers.map((l) => ({ ...l, mask: new Uint8Array(l.mask) }));
+      sendStack(msg.id, t0, null, manualStack(card, paint, msg.mw, msg.mh, dmap(msg.depth), msg.settings));
+    }
   } catch (e) {
     post({ type: 'error', id: msg.id, message: e instanceof Error ? e.message : String(e) });
   }

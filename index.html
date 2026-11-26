@@ -392,9 +392,55 @@
           <p class="hint">Uses the depth map: near parts move more than far parts. The depth panel's focus plane sets which depth stays still.</p>
         </div>
         <div id="card-options" class="stack hidden">
-          <p class="hint">Upload a finished card (a frame with a window, a character and a name banner). It is split into 3 layers: the still frame, the character and the background, which slide at different speeds as you tilt. The cut-out model downloads once (~115–190 MB).</p>
+          <div class="seg" data-setting="cardMode" role="radiogroup" aria-label="Splitter mode">
+            <button data-value="auto" title="Find the layers automatically from depth and the cut-out model">✨ Auto</button>
+            <button data-value="manual" title="Paint the layers yourself">✏️ Manual</button>
+          </div>
           <div id="card-status" class="depth-status"></div>
-          <button id="card-split" class="btn primary wide">Split card into layers</button>
+          <div id="card-auto" class="stack">
+            <p class="hint">Splits the card into a still frame, the character and the background (plus optional depth layers) using the depth map and a cut-out model. The model downloads once (~115–190 MB); everything stays on your device.</p>
+            <button id="card-split" class="btn primary wide">✨ Split automatically</button>
+            <label class="slider"><span>Character depth threshold <output id="card-thr-out"></output></span>
+              <input id="card-thr" type="range" min="0.02" max="0.98" step="0.01" />
+            </label>
+            <button id="card-thr-auto" class="btn small ghost">Automatic threshold</button>
+            <span class="label">Extra depth layers</span>
+            <div class="seg small" data-setting="cardExtra" role="radiogroup" aria-label="Extra depth layers">
+              <button data-value="0">None</button>
+              <button data-value="1">1</button>
+              <button data-value="2">2</button>
+            </div>
+          </div>
+          <div id="card-manual" class="stack hidden">
+            <div class="seg small" data-setting="cardStage" role="radiogroup" aria-label="Paint or preview">
+              <button data-value="paint">🖌 Paint</button>
+              <button data-value="preview">👁 Preview</button>
+            </div>
+            <span class="label">Layers (paint each in its colour)</span>
+            <div id="card-layer-list" class="layer-list"></div>
+            <button id="card-add-layer" class="btn small ghost wide">+ Add layer</button>
+            <div class="seg small" data-setting="cardTool" role="radiogroup" aria-label="Paint tool">
+              <button data-value="brush">Brush</button>
+              <button data-value="eraser">Eraser</button>
+              <button data-value="magic" title="Tap to select a region of similar colour and depth">✨ Magic</button>
+            </div>
+            <label id="card-size-field" class="slider"><span>Brush size <output id="card-size-out"></output></span>
+              <input id="card-size" type="range" min="2" max="120" step="1" />
+            </label>
+            <label id="card-soft-field" class="slider"><span>Softness <output id="card-soft-out"></output></span>
+              <input id="card-soft" type="range" min="0" max="0.95" step="0.05" />
+            </label>
+            <label id="card-tol-field" class="slider hidden"><span>Magic tolerance <output id="card-tol-out"></output></span>
+              <input id="card-tol" type="range" min="0" max="1" step="0.02" />
+            </label>
+            <div class="row">
+              <button id="card-undo" class="btn small">↶ Undo</button>
+              <button id="card-redo" class="btn small">↷ Redo</button>
+            </div>
+            <button id="card-from-auto" class="btn small ghost wide">Start from Auto</button>
+            <button id="card-build" class="btn primary wide">Build 3D card</button>
+            <p class="hint">One finger / mouse paints; two fingers (or the wheel, middle-drag) zoom and pan. Painting a layer takes those pixels from the others; unpainted areas are background. Tick “still” for layers that should not move.</p>
+          </div>
           <span class="label">Background painting (optional, best result)</span>
           <input id="card-bg-input" type="file" hidden />
           <div class="row">

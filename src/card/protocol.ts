@@ -1,21 +1,35 @@
 import type { CardSettings } from '../core/cardlayers';
+import type { AutoSettings, CardStack, LayerRole } from '../core/cardstack';
 
 export interface RawImage { width: number; height: number; buffer: ArrayBuffer }
 
-export type CardRequest = {
-  type: 'split';
-  id: number;
-  card: RawImage;
-  bg: RawImage | null;
-  settings: CardSettings;
-};
+export interface RawDepthMap { width: number; height: number; buffer: ArrayBuffer }
+
+export interface RawLayer {
+  id: string; name: string; role: LayerRole; still: boolean;
+  motion: { x: number; y: number }; depth: number | null; image: RawImage;
+}
+
+export type CardRequest =
+  | {
+    /** ✨ Auto split. `key` identifies the card so its cut-out can be reused. */
+    type: 'auto'; id: number; key: string;
+    card: RawImage; bg: RawImage | null; depth: RawDepthMap | null;
+    settings: CardSettings; auto: AutoSettings;
+  }
+  | {
+    /** ✏️ Build from painted masks (mask resolution mw × mh). */
+    type: 'manual'; id: number;
+    card: RawImage; depth: RawDepthMap | null; settings: CardSettings;
+    mw: number; mh: number;
+    layers: { id: string; name: string; role: LayerRole; still: boolean; mask: ArrayBuffer }[];
+  };
 
 export type CardResponse =
   | { type: 'progress'; id: number; stage: string; loaded?: number; total?: number }
   | {
-    type: 'done'; id: number; ms: number; model: string;
-    frame: RawImage; char: RawImage; bg: RawImage;
-    info: import('../core/cardlayers').CardLayers['info'];
+    type: 'stack'; id: number; ms: number; model: string | null;
+    stack: Omit<CardStack, 'layers'> & { layers: RawLayer[] };
   }
   | { type: 'error'; id: number; message: string };
 

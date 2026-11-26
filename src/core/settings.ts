@@ -5,6 +5,7 @@ import type { MotionSettings } from './motion';
 import { DEFAULT_STEREOGRAM, type StereogramSettings } from './autostereogram';
 import { DEFAULT_SCENE, type SceneSettings } from './scene';
 import { DEFAULT_CARD, type CardSettings } from './cardlayers';
+import { DEFAULT_AUTO, type AutoSettings } from './cardstack';
 import type { Interpolation } from './types';
 
 export type ShiftDirection = 1 | -1;
@@ -69,6 +70,9 @@ export interface StereoSettings {
   scene: SceneSettings;
   /** Layered 3D card (parallax) splitting options. */
   card: CardSettings;
+  /** Card splitter mode: ✨ automatic or ✏️ painted by hand. */
+  cardMode: 'auto' | 'manual';
+  cardAuto: AutoSettings;
   /** File type for still formats (sbs, half-sbs, ou, half-ou, anaglyph). */
   exportFormat: ImageFileFormat;
   /** 0..1 quality for JPEG / WEBP / MPO. */
@@ -107,6 +111,8 @@ export const DEFAULT_SETTINGS: StereoSettings = {
   stereogram: { ...DEFAULT_STEREOGRAM, sketch: { ...DEFAULT_STEREOGRAM.sketch } },
   scene: { ...DEFAULT_SCENE },
   card: JSON.parse(JSON.stringify(DEFAULT_CARD)),
+  cardMode: 'auto',
+  cardAuto: { ...DEFAULT_AUTO },
   exportFormat: 'png',
   exportQuality: 0.95,
 };

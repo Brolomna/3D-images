@@ -22,7 +22,10 @@ import { ACCEPT_ATTR, createSampleImage, importFile, type ImportedImage } from '
 import { PreviewRenderer, type ViewMode } from './ui/preview';
 import { deepMerge, settingsFromHash, shareUrl } from './ui/share';
 import { StereoWorkerClient } from './worker/client';
-import { CardClient, type CardResult } from './card/client';
+import { CardClient, type CardProgress, type CardResult } from './card/client';
+import { CardEditor, type PaintTool } from './card/editor';
+import { normaliseRaw } from './core/parts';
+import { stackToPaint } from './core/cardstack';
 import { cardZip } from './card/export';
 import { CardViewer } from './card/viewer';
 import type { RenderInfo } from './worker/protocol';
@@ -81,7 +84,7 @@ let customTextureLoaded = false;
 
 /** Depth is needed for depth-based stereo and always for the motion style. */
 function depthWanted(s = settings): boolean {
-  return s.depth.enabled || s.format === 'motion' || s.format === 'stereogram' || s.scene.enabled;
+  return s.depth.enabled || s.format === 'motion' || s.format === 'stereogram' || s.format === 'card' || s.scene.enabled;
 }
 let imageToken = 0;
 
@@ -150,6 +153,7 @@ function ensureDepth(): Promise<DepthMap | null> {
     depthState = { kind: 'ready', map, ms: performance.now() - t0 };
     await worker.setDepth(map);
     syncDepthStatus();
+    if (cardEditorToken === imageToken) cardEditor.setDepth(normaliseRaw(map));
     void syncScene();
     scheduleRender();
     return map;
@@ -205,30 +209,67 @@ function syncDepthStatus() {
 
 const cardClient = new CardClient();
 const cardViewer = new CardViewer($('stage'));
+const cardEditor = new CardEditor($('stage'));
 let cardResult: (CardResult & { key: string }) | null = null;
 let cardUrls: string[] = [];
 let cardBg: { name: string; image: RGBAImage } | null = null;
 let cardBusy = false;
+let cardStage: 'paint' | 'preview' = 'paint';
+let cardEditorToken = -1;
+let cardAutoTimer = 0;
+let cardAutoRan = false; // the model has run for this card (threshold changes re-split live)
 
 function cardKey(): string {
-  return JSON.stringify({ c: settings.card, t: imageToken, bg: cardBg?.name ?? null });
+  return JSON.stringify({ c: settings.card, m: settings.cardMode, a: settings.cardMode === 'auto' ? settings.cardAuto : null, t: imageToken, bg: cardBg?.name ?? null });
 }
 
-/** Show the tilt viewer in the Output view when the Layered 3D card style is chosen. */
+/** Depth map of the card normalised to 0..1 (for Auto and magic select). */
+function cardDepth(): DepthMap | null {
+  return depthState.kind === 'ready' ? normaliseRaw(depthState.map) : null;
+}
+
+/** Show the tilt viewer or the paint editor in the Output view for the Layered 3D card style. */
 function syncCardView() {
   const on = settings.format === 'card' && preview.mode === 'sbs' && !!current;
-  cardViewer.setVisible(on);
-  if (!on) return;
+  const painting = on && settings.cardMode === 'manual' && cardStage === 'paint';
+  if (painting && current && cardEditorToken !== imageToken) {
+    cardEditor.setCard(current.image, cardDepth());
+    cardEditorToken = imageToken;
+  }
+  cardEditor.setVisible(painting);
+  cardViewer.setVisible(on && !painting);
+  if (!on || painting) return;
   if (!cardResult) {
     cardViewer.setLayers(null);
-    cardViewer.setMessage(cardBusy ? 'Splitting the card…' : 'Press “Split card into layers” to build the 3D card.');
+    cardViewer.setMessage(cardBusy ? 'Building the layers…'
+      : settings.cardMode === 'auto' ? 'Press “✨ Split automatically” to build the 3D card.'
+        : 'Paint the layers, then press “Build 3D card”.');
   } else {
-    cardViewer.setMessage(cardResult.key === cardKey() ? '' : 'Settings changed — split again to update.');
+    cardViewer.setMessage(cardResult.key === cardKey() ? '' : 'Settings changed — build again to update.');
   }
+}
+
+function syncCardStatus(text = '') {
   const status = $('card-status');
+  if (text) return;
   if (!cardBusy && cardResult) {
+    const st = cardResult.stack;
     status.className = 'depth-status ok';
-    status.textContent = `✓ Split with ${cardResult.model} in ${(cardResult.ms / 1000).toFixed(1)} s`;
+    const how = st.mode === 'auto'
+      ? `${st.source === 'matte+depth' ? 'cut-out + depth' : st.source === 'matte' ? 'cut-out only' : 'depth only'}${cardResult.model ? ` (${cardResult.model})` : ''}`
+      : 'from your painting';
+    status.textContent = `✓ ${st.layers.length} layers ${how} · ${(cardResult.ms / 1000).toFixed(1)} s`;
+  }
+}
+
+function showProgress(p: CardProgress) {
+  const status = $('card-status');
+  status.className = 'depth-status';
+  if (p.total) {
+    const pct = Math.round((100 * (p.loaded ?? 0)) / p.total);
+    status.innerHTML = `<span>${p.stage} ${pct}%</span><span class="bar"><i style="width:${pct}%"></i></span>`;
+  } else {
+    status.innerHTML = `<span class="spinner"></span><span>${p.stage}…</span>`;
   }
 }
 
@@ -240,39 +281,101 @@ async function toUrl(img: RGBAImage): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
-async function runCardSplit() {
-  if (!current || cardBusy) return;
+async function showStack(r: CardResult, key: string) {
+  cardUrls.forEach((u) => URL.revokeObjectURL(u));
+  cardUrls = await Promise.all(r.stack.layers.map((l) => toUrl(l.image)));
+  cardResult = { ...r, key };
+  cardViewer.setLayers({
+    win: r.stack.win, size: r.stack.size,
+    layers: r.stack.layers.map((l, i) => ({ url: cardUrls[i], role: l.role, still: l.still, motion: l.motion })),
+  });
+  if (r.stack.threshold != null && settings.cardAuto.threshold == null) {
+    $<HTMLInputElement>('card-thr').value = String(r.stack.threshold);
+    $('card-thr-out').textContent = `auto (${Math.round(r.stack.threshold * 100)}%)`;
+  }
+}
+
+/** ✨ Auto split (first run downloads the cut-out model; later runs reuse it). */
+async function runCardAuto(): Promise<CardResult | null> {
+  if (!current || cardBusy) return null;
   cardBusy = true;
   syncCardView();
-  const status = $('card-status');
-  const btn = $<HTMLButtonElement>('card-split');
-  btn.disabled = true;
+  $<HTMLButtonElement>('card-split').disabled = true;
   try {
+    if (depthState.kind !== 'ready' && depthState.kind !== 'error') {
+      showProgress({ stage: 'Analysing depth' });
+      await ensureDepth();
+    }
     const key = cardKey();
-    const r = await cardClient.split(current.image, cardBg?.image ?? null, settings.card, (p) => {
-      status.className = 'depth-status';
-      if (p.total) {
-        const pct = Math.round((100 * (p.loaded ?? 0)) / p.total);
-        status.innerHTML = `<span>${p.stage} ${pct}%</span><span class="bar"><i style="width:${pct}%"></i></span>`;
-      } else {
-        status.innerHTML = `<span class="spinner"></span><span>${p.stage}…</span>`;
-      }
-    });
-    cardUrls.forEach((u) => URL.revokeObjectURL(u));
-    const [frame, char, bg] = await Promise.all([toUrl(r.frame), toUrl(r.char), toUrl(r.bg)]);
-    cardUrls = [frame, char, bg];
-    cardResult = { ...r, key };
-    cardViewer.setLayers({ frame, char, bg, win: r.info.win, size: r.info.size });
+    const r = await cardClient.auto(String(imageToken), current.image, cardBg?.image ?? null, cardDepth(), settings.card, settings.cardAuto, showProgress);
+    await showStack(r, key);
+    cardAutoRan = true;
+    return r;
   } catch (e) {
+    const status = $('card-status');
     status.className = 'depth-status err';
     status.textContent = `Could not split the card: ${(e as Error).message}`;
     toast(`Layered 3D card failed: ${(e as Error).message}`, true);
+    return null;
   } finally {
     cardBusy = false;
-    btn.disabled = false;
+    $<HTMLButtonElement>('card-split').disabled = false;
+    syncCardStatus();
     syncCardView();
   }
 }
+
+/** Re-split live when Auto settings change (only once the model has run for this card). */
+function scheduleCardAuto() {
+  if (settings.format !== 'card' || settings.cardMode !== 'auto' || !cardAutoRan) return;
+  clearTimeout(cardAutoTimer);
+  cardAutoTimer = window.setTimeout(() => void runCardAuto(), 250);
+}
+
+/** ✏️ Build the stack from the painted masks. */
+async function runCardManual() {
+  if (!current || cardBusy) return;
+  if (!cardEditor.painted()) { toast('Paint at least one layer first (or use “Start from Auto”).', true); return; }
+  cardBusy = true;
+  showProgress({ stage: 'Building the layers' });
+  try {
+    const key = cardKey();
+    const r = await cardClient.manual(current.image, cardEditor.layers, cardEditor.mw, cardEditor.mh, cardDepth(), settings.card);
+    await showStack(r, key);
+    cardStage = 'preview';
+  } catch (e) {
+    toast(`Could not build the card: ${(e as Error).message}`, true);
+  } finally {
+    cardBusy = false;
+    syncCardStatus();
+    syncUI();
+  }
+}
+
+function renderLayerList() {
+  const box = $('card-layer-list');
+  box.innerHTML = '';
+  cardEditor.layers.forEach((l, i) => {
+    const row = document.createElement('div');
+    row.className = 'layer-item';
+    row.setAttribute('role', 'radio');
+    row.setAttribute('aria-checked', String(i === cardEditor.active));
+    row.innerHTML = `<span class="sw" style="background:rgb(${l.color.join(',')})"></span><span>${escapeHtml(l.name)}</span>`
+      + `<label title="This layer stays still"><input type="checkbox" ${l.still ? 'checked' : ''}> still</label>`
+      + (l.role === 'mid' ? '<button title="Remove layer" aria-label="Remove layer">×</button>' : '<span></span>');
+    row.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === 'INPUT') { cardEditor.setStill(i, (t as HTMLInputElement).checked); return; }
+      if (t.tagName === 'BUTTON') { cardEditor.removeLayer(i); return; }
+      cardEditor.active = i;
+      renderLayerList();
+    });
+    box.appendChild(row);
+  });
+  $<HTMLButtonElement>('card-undo').disabled = !cardEditor.canUndo();
+  $<HTMLButtonElement>('card-redo').disabled = !cardEditor.canRedo();
+}
+cardEditor.onChange = () => renderLayerList();
 
 // ───────────────────────── 3D Scene ─────────────────────────
 
@@ -676,6 +779,28 @@ function syncUI() {
   $('motion-options').classList.toggle('hidden', s.format !== 'motion');
   const cd = s.card;
   $('card-options').classList.toggle('hidden', s.format !== 'card');
+  setSeg('cardMode', s.cardMode);
+  $('card-auto').classList.toggle('hidden', s.cardMode !== 'auto');
+  $('card-manual').classList.toggle('hidden', s.cardMode !== 'manual');
+  setSeg('cardExtra', String(s.cardAuto.extraLayers));
+  if (s.cardAuto.threshold != null) {
+    $<HTMLInputElement>('card-thr').value = String(s.cardAuto.threshold);
+    $('card-thr-out').textContent = `${Math.round(s.cardAuto.threshold * 100)}%`;
+  } else if (!cardResult?.stack.threshold) {
+    $('card-thr-out').textContent = 'auto';
+  }
+  setSeg('cardStage', cardStage);
+  setSeg('cardTool', cardEditor.tool);
+  $('card-tol-field').classList.toggle('hidden', cardEditor.tool !== 'magic');
+  $('card-size-field').classList.toggle('hidden', cardEditor.tool === 'magic');
+  $('card-soft-field').classList.toggle('hidden', cardEditor.tool === 'magic');
+  $<HTMLInputElement>('card-size').value = String(cardEditor.size);
+  $('card-size-out').textContent = `${cardEditor.size} px`;
+  $<HTMLInputElement>('card-soft').value = String(cardEditor.softness);
+  $('card-soft-out').textContent = `${Math.round(cardEditor.softness * 100)}%`;
+  $<HTMLInputElement>('card-tol').value = String(cardEditor.tolerance);
+  $('card-tol-out').textContent = `${Math.round(cardEditor.tolerance * 100)}%`;
+  renderLayerList();
   $<HTMLInputElement>('card-banner').checked = !cd.noBanner;
   $('card-band-row').classList.toggle('hidden', cd.noBanner);
   $<HTMLInputElement>('card-band0').value = String(Math.round(cd.bannerBand[0] * 1000) / 10);
@@ -814,7 +939,10 @@ async function loadImage(p: Promise<ImportedImage>) {
     sceneShown = false;
     drawSceneSwatches();
     cardResult = null;
+    cardAutoRan = false;
+    cardEditorToken = -1;
     cardViewer.setLayers(null);
+    $('card-status').textContent = '';
     const info = $('image-info');
     info.classList.remove('hidden');
     const mp = (img.image.width * img.image.height) / 1e6;
@@ -851,7 +979,7 @@ async function doExport() {
     syncUI();
     try {
       setBusy(true, 'Packing the layers…');
-      const zip = await cardZip(cardResult);
+      const zip = await cardZip(cardResult.stack);
       const name = `${baseName(current.name)}_3d_card_layers.zip`;
       download(zip, name);
       toast(`Exported ${name} — frame, character, background, layers.json and a viewer.html`);
@@ -900,7 +1028,7 @@ async function downloadParts(kind: 'depth' | 'views' | 'frames' | 'all') {
     setBusy(true, 'Preparing downloads…');
     const files = await worker.exportParts(settings, kind, (stage) => setBusy(true, stage));
     if (kind === 'all' && settings.format === 'card' && cardResult) {
-      const zipped = unzipSync(new Uint8Array(await (await cardZip(cardResult)).arrayBuffer()));
+      const zipped = unzipSync(new Uint8Array(await (await cardZip(cardResult.stack)).arrayBuffer()));
       for (const [name, bytes] of Object.entries(zipped)) files.push({ name: `card_${name}`, bytes });
     }
     const base = baseName(current.name);
@@ -1089,7 +1217,37 @@ function bindAll() {
     $<HTMLSelectElement>(id).addEventListener('change', (e) => { apply((e.target as HTMLSelectElement).value); commit(); });
   };
   // Layered 3D card
-  $('card-split').addEventListener('click', () => void runCardSplit());
+  $('card-split').addEventListener('click', () => void runCardAuto());
+  bindSeg('cardMode', (v) => { settings.cardMode = v as 'auto' | 'manual'; cardStage = 'paint'; });
+  bindSeg('cardExtra', (v) => { settings.cardAuto.extraLayers = Number(v) || 0; scheduleCardAuto(); });
+  onInput('card-thr', (el) => { settings.cardAuto.threshold = num(el, 0.5); scheduleCardAuto(); });
+  $('card-thr-auto').addEventListener('click', () => { settings.cardAuto.threshold = null; commit(); scheduleCardAuto(); });
+  document.querySelectorAll<HTMLButtonElement>('.seg[data-setting="cardStage"] button').forEach((b) => b.addEventListener('click', () => {
+    cardStage = b.dataset.value as 'paint' | 'preview';
+    syncUI();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('.seg[data-setting="cardTool"] button').forEach((b) => b.addEventListener('click', () => {
+    cardEditor.tool = b.dataset.value as PaintTool;
+    syncUI();
+  }));
+  $('card-add-layer').addEventListener('click', () => cardEditor.addLayer());
+  $('card-undo').addEventListener('click', () => cardEditor.doUndo());
+  $('card-redo').addEventListener('click', () => cardEditor.doRedo());
+  $('card-build').addEventListener('click', () => void runCardManual());
+  $('card-from-auto').addEventListener('click', async () => {
+    if (!current) return;
+    const r = cardResult?.stack.mode === 'auto' ? cardResult : await runCardAuto();
+    if (!r) return;
+    if (cardEditorToken !== imageToken) { cardEditor.setCard(current.image, cardDepth()); cardEditorToken = imageToken; }
+    cardEditor.setLayers(stackToPaint(r.stack, cardEditor.mw, cardEditor.mh));
+    settings.cardMode = 'manual';
+    cardStage = 'paint';
+    commit();
+  });
+  const editorInput = (id: string, apply: (v: number) => void) => $<HTMLInputElement>(id).addEventListener('input', (e) => { apply(Number((e.target as HTMLInputElement).value)); syncUI(); });
+  editorInput('card-size', (v) => { cardEditor.size = v; });
+  editorInput('card-soft', (v) => { cardEditor.softness = v; });
+  editorInput('card-tol', (v) => { cardEditor.tolerance = v; });
   const cardBgInput = $<HTMLInputElement>('card-bg-input');
   cardBgInput.accept = ACCEPT_ATTR;
   $('card-bg-add').addEventListener('click', () => cardBgInput.click());
@@ -1105,10 +1263,10 @@ function bindAll() {
     } catch (e) { toast((e as Error).message, true); }
   });
   $('card-bg-clear').addEventListener('click', () => { cardBg = null; syncUI(); });
-  onInput('card-banner', (el) => { settings.card.noBanner = !el.checked; }, 'change');
+  onInput('card-banner', (el) => { settings.card.noBanner = !el.checked; scheduleCardAuto(); }, 'change');
   onInput('card-band0', (el) => { settings.card.bannerBand[0] = clamp(num(el, 62), 0, 100) / 100; }, 'change');
   onInput('card-band1', (el) => { settings.card.bannerBand[1] = clamp(num(el, 69.5), 0, 100) / 100; }, 'change');
-  onInput('card-drophue', (el) => { settings.card.dropHue = el.checked ? [300, 345] : null; }, 'change');
+  onInput('card-drophue', (el) => { settings.card.dropHue = el.checked ? [300, 345] : null; scheduleCardAuto(); }, 'change');
   onInput('card-winauto', (el) => { settings.card.window = el.checked ? null : [...DEFAULT_WINDOW]; }, 'change');
   (['card-wx0', 'card-wy0', 'card-wx1', 'card-wy1'] as const).forEach((id, i) => {
     onInput(id, (el) => {

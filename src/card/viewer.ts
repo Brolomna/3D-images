@@ -7,23 +7,26 @@
  * slowly re-centring rest pose), with mouse / finger drag as the fallback.
  * Tapping the card re-centres it.
  */
+export interface ViewerLayer {
+  url: string;
+  role: 'bg' | 'mid' | 'char' | 'frame';
+  still: boolean;
+  /** Movement at full tilt, % of the layer's own size. */
+  motion: { x: number; y: number };
+}
+
 export interface ViewerLayers {
-  frame: string; // image URLs
-  char: string;
-  bg: string;
+  /** Back to front. */
+  layers: ViewerLayer[];
   win: { x: number; y: number; w: number; h: number };
   size: [number, number];
 }
 
-/** Movement at full tilt, as % of each layer's own size. */
-export const PARALLAX = { bg: { x: 8, y: 6 }, char: { x: 4, y: 2.4 } };
 
 export class CardViewer {
   readonly el: HTMLDivElement;
   private card: HTMLDivElement;
-  private bg: HTMLImageElement;
-  private char: HTMLImageElement;
-  private frame: HTMLImageElement;
+  private moving: { el: HTMLImageElement; motion: { x: number; y: number } }[] = [];
   private motionBtn: HTMLButtonElement;
   private x = 0; private y = 0; // current (smoothed) tilt −1..1
   private tx = 0; private ty = 0; // target tilt
@@ -40,17 +43,11 @@ export class CardViewer {
     this.el = document.createElement('div');
     this.el.className = 'card-viewer';
     this.el.innerHTML = `
-      <div class="card3d">
-        <div class="card3d-win"><img class="card3d-bg" alt="" draggable="false"><img class="card3d-char" alt="" draggable="false"></div>
-        <img class="card3d-frame" alt="" draggable="false">
-      </div>
+      <div class="card3d"><div class="card3d-win"></div></div>
       <p class="card3d-msg"></p>
       <button class="btn small card3d-motion" type="button">✨ Turn on motion</button>`;
     host.appendChild(this.el);
     this.card = this.el.querySelector('.card3d')!;
-    this.bg = this.el.querySelector('.card3d-bg')!;
-    this.char = this.el.querySelector('.card3d-char')!;
-    this.frame = this.el.querySelector('.card3d-frame')!;
     this.motionBtn = this.el.querySelector('.card3d-motion')!;
     this.motionBtn.addEventListener('click', () => void this.enableMotion());
     this.bindPointer();
@@ -76,9 +73,32 @@ export class CardViewer {
     this.card.style.aspectRatio = `${l.size[0]} / ${l.size[1]}`;
     const box = this.card.querySelector<HTMLDivElement>('.card3d-win')!;
     Object.assign(box.style, { left: `${win.x * 100}%`, top: `${win.y * 100}%`, width: `${win.w * 100}%`, height: `${win.h * 100}%` });
-    // Character: the full card, positioned relative to the window.
-    Object.assign(this.char.style, { left: `${(-win.x / win.w) * 100}%`, top: `${(-win.y / win.h) * 100}%`, width: `${100 / win.w}%`, height: `${100 / win.h}%` });
-    this.bg.src = l.bg; this.char.src = l.char; this.frame.src = l.frame;
+    box.replaceChildren();
+    this.card.querySelectorAll('.card3d-top').forEach((e) => e.remove());
+    this.moving = [];
+    // Still layers in front of every moving layer sit on top, unclipped (the frame).
+    let topFrom = l.layers.length;
+    while (topFrom > 0 && l.layers[topFrom - 1].still) topFrom--;
+    l.layers.forEach((layer, i) => {
+      const im = document.createElement('img');
+      im.alt = '';
+      im.draggable = false;
+      im.src = layer.url;
+      if (i >= topFrom) {
+        im.className = 'card3d-top';
+        this.card.appendChild(im);
+        return;
+      }
+      if (layer.role === 'bg') {
+        im.className = 'card3d-bg'; // oversized, so its edges never show
+      } else {
+        // Full card, positioned relative to the window.
+        im.className = layer.role === 'char' ? 'card3d-char' : 'card3d-layer';
+        Object.assign(im.style, { left: `${(-win.x / win.w) * 100}%`, top: `${(-win.y / win.h) * 100}%`, width: `${100 / win.w}%`, height: `${100 / win.h}%` });
+      }
+      box.appendChild(im);
+      if (!layer.still) this.moving.push({ el: im, motion: layer.motion });
+    });
     this.fit();
     this.start();
   }
@@ -177,8 +197,9 @@ export class CardViewer {
       const k = 1 - Math.exp(-dt / 0.09);
       this.x += (this.tx - this.x) * k;
       this.y += (this.ty - this.y) * k;
-      this.bg.style.transform = `translate3d(${(-this.x * PARALLAX.bg.x).toFixed(3)}%, ${(-this.y * PARALLAX.bg.y).toFixed(3)}%, 0)`;
-      this.char.style.transform = `translate3d(${(-this.x * PARALLAX.char.x).toFixed(3)}%, ${(-this.y * PARALLAX.char.y).toFixed(3)}%, 0)`;
+      for (const m of this.moving) {
+        m.el.style.transform = `translate3d(${(-this.x * m.motion.x).toFixed(3)}%, ${(-this.y * m.motion.y).toFixed(3)}%, 0)`;
+      }
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);

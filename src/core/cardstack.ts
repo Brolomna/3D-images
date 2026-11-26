@@ -48,6 +48,8 @@ export interface CardStack {
   threshold: number | null;
   /** Auto: what the character was found from. */
   source?: 'matte+depth' | 'matte' | 'depth';
+  /** The background is the user's own painting. */
+  ownBackground?: boolean;
 }
 
 export interface AutoSettings {
@@ -282,7 +284,7 @@ export function autoStack(
   return {
     mode: 'auto', size: [W, H], window: box, win: windowInfo(W, H, box), layers,
     bannerTop: s.noBanner ? null : [Math.round(cut[Math.min(W - 1, X0 + 2)]), Math.round(cmin), Math.round(cmax)],
-    threshold: thr, source: m && dn ? 'matte+depth' : m ? 'matte' : 'depth',
+    threshold: thr, source: m && dn ? 'matte+depth' : m ? 'matte' : 'depth', ownBackground: !!ownBg,
   };
 }
 
@@ -396,14 +398,25 @@ export function magicSelect(img: RGBAImage, depth: Float32Array | null, sx: numb
   return out;
 }
 
-/** Turn an Auto stack into paint masks (mask resolution mw × mh) for hand fixes. */
+/**
+ * Turn an Auto stack into paint masks (mask resolution mw × mh) for hand
+ * fixes. Front layers win where layers overlap (e.g. the character's hidden
+ * continuation under the frame goes to the frame).
+ */
 export function stackToPaint(stack: CardStack, mw: number, mh: number): PaintLayer[] {
   const [W, H] = stack.size;
-  return stack.layers.map((l) => {
+  const masks = stack.layers.map((l) => {
     const a = new Float32Array(W * H);
     if (l.role !== 'bg') for (let i = 0; i < a.length; i++) a[i] = l.image.data[i * 4 + 3] / 255;
-    const small = resample(a, W, H, mw, mh);
-    return { id: l.id, name: l.name, role: l.role, still: l.still, mask: Uint8Array.from(small, (v) => Math.round(Math.min(1, Math.max(0, v)) * 255)) };
+    return Uint8Array.from(resample(a, W, H, mw, mh), (v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
   });
+  const taken = new Uint8Array(mw * mh);
+  for (let j = masks.length - 1; j >= 0; j--) {
+    const m = masks[j];
+    for (let i = 0; i < m.length; i++) {
+      m[i] = Math.min(m[i], 255 - taken[i]);
+      taken[i] = Math.max(taken[i], m[i]);
+    }
+  }
+  return stack.layers.map((l, j) => ({ id: l.id, name: l.name, role: l.role, still: l.still, mask: masks[j] }));
 }
-
