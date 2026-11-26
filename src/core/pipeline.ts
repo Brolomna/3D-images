@@ -252,6 +252,27 @@ export class StereoPipeline {
     };
   }
 
+  /** The current depth map and whether it is already normalised (0..1). */
+  getDepth(): { map: DepthMap; normalized: boolean } | null {
+    return this.rawDepth ? { map: this.rawDepth, normalized: this.depthNormalized } : null;
+  }
+
+  /**
+   * The depth map aligned with the output framing (same size as each eye
+   * view, 0 = far … 1 = near), for export. Null without a depth map.
+   */
+  framedDepth(settings: StereoSettings, renderScale = 1): DepthMap | null {
+    if (!this.rawDepth) return null;
+    const s = { ...settings, depth: { ...settings.depth, enabled: true } };
+    const p = this.prepare(s, renderScale);
+    const f = p.depthFrame;
+    if (!f) return null;
+    const { eyeW, eyeH, marginX, marginY } = p.base;
+    const out = new Float32Array(eyeW * eyeH);
+    for (let y = 0; y < eyeH; y++) out.set(f.data.subarray((y + marginY) * f.width + marginX, (y + marginY) * f.width + marginX + eyeW), y * eyeW);
+    return { width: eyeW, height: eyeH, data: out };
+  }
+
   /** Optional user texture for the stereogram 'custom' pattern. */
   private customTexture: RGBAImage | null = null;
 
@@ -263,7 +284,7 @@ export class StereoPipeline {
    * Hidden-3D autostereogram of the current photo: its depth map is the
    * hidden shape. Returns null-depth flag when no depth map is available yet.
    */
-  renderStereogram(settings: StereoSettings, renderScale = 1): { image: RGBAImage; hasDepth: boolean; depth: RGBAImage | null; sketch: RGBAImage | null } {
+  renderStereogram(settings: StereoSettings, renderScale = 1): { image: RGBAImage; hasDepth: boolean; depth: RGBAImage | null; sketch: RGBAImage | null; shape: DepthMap | null } {
     const s = settings.format === 'stereogram' ? settings : { ...settings, format: 'stereogram' as const };
     const p = this.prepare(s, renderScale);
     const { eyeW, eyeH, marginX, marginY } = p.base;
@@ -292,6 +313,7 @@ export class StereoPipeline {
       hasDepth: !!p.depthFrame,
       depth: p.depthFrame ? depthToImage(shape) : null,
       sketch,
+      shape: p.depthFrame ? shape : null,
     };
   }
 

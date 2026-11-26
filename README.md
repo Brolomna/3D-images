@@ -149,6 +149,21 @@ Autostereograms like the classic *Magic Eye* prints repeat a texture strip acros
 
 The *Depth* view shows the hidden shape.
 
+### More downloads
+Besides the main export, the Export panel can download the pictures the app makes along the way:
+
+- **Depth map:** 16-bit grayscale PNGs, bright = near. `depth.png` matches the output framing (same size as each eye view), and `depth_full_photo.png` covers the whole photo. Both are ready for displacement in 3D tools.
+- **Left + right:** the two eye views at full resolution.
+- **Frames as pictures:** every frame of the **Wiggle** animation, as a sequence of PNGs.
+  - The wiggle simply flips between the left- and right-eye pictures, or sweeps through in-between views, and the jump reads as depth.
+  - For **3D photo motion** this gives every frame of the loop.
+- **All parts (ZIP):** everything relevant to the current style:
+  - the views, the finished output and the depth maps;
+  - wiggle frames;
+  - the stereogram, its sketch and its hidden shape;
+  - the card layers;
+  - with 3D Scene on, the cut-out subject (transparent PNG), the new background and the scene depth.
+
 ### Workflow
 - **Batch:** process many photos with the current settings and download them as one ZIP. Dropping several files on the page does the same.
 - **Share links:** the settings that differ from the defaults are stored in the URL (`#s=…`), and *Copy settings link* shares them. Photos are never part of the link.

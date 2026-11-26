@@ -482,6 +482,8 @@ export interface SceneResult {
   depth: DepthMap;
   /** Subject alpha at working resolution (for previews / tests). */
   alpha: DepthMap;
+  /** The new background on its own (working resolution). */
+  background: RGBAImage;
 }
 
 /** Bilinear sample of a single-channel map at normalised coordinates. */
@@ -634,5 +636,5 @@ export function buildScene(
       out.data[o + 3] = 255;
     }
   }
-  return { image: out, depth: { width: w, height: h, data: depth }, alpha: alphaMap };
+  return { image: out, depth: { width: w, height: h, data: depth }, alpha: alphaMap, background: bg.image };
 }

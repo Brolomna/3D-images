@@ -2,6 +2,9 @@ import type { CropRect } from '../core/layout';
 import type { SceneSettings } from '../core/scene';
 import type { StereoSettings } from '../core/settings';
 
+/** depth: depth maps · views: left/right · frames: wiggle/motion frames · all: everything for the style. */
+export type PartsKind = 'depth' | 'views' | 'frames' | 'all';
+
 export interface RawDepth { width: number; height: number; buffer: ArrayBuffer }
 
 export type WorkerRequest =
@@ -9,6 +12,7 @@ export type WorkerRequest =
   | { type: 'depth'; id: number; depth: RawDepth | null }
   | { type: 'texture'; id: number; texture: { width: number; height: number; buffer: ArrayBuffer } | null }
   | { type: 'scene'; id: number; scene: SceneSettings }
+  | { type: 'parts'; id: number; settings: StereoSettings; kind: PartsKind }
   | { type: 'scene-bg'; id: number; bg: { width: number; height: number; buffer: ArrayBuffer; depth: RawDepth } | null }
   | {
     type: 'render'; id: number; settings: StereoSettings; scale: number; includeDepth: boolean;
@@ -40,6 +44,7 @@ export interface RenderInfo {
 
 export type WorkerResponse =
   | { type: 'ok'; id: number }
+  | { type: 'parts-ready'; id: number; files: { name: string; bytes: ArrayBuffer }[] }
   | { type: 'scene-ready'; id: number; applied: boolean; preview: { width: number; height: number; buffer: ArrayBuffer } | null; ms: number }
   | {
     type: 'rendered'; id: number; eyeW: number; eyeH: number;

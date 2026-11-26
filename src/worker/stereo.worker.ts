@@ -10,12 +10,14 @@ import { buildPalette, encodeGif, encodeGifStream } from '../core/gif';
 import { motionTiming } from '../core/motion';
 import { resolveOutputSize } from '../core/layout';
 import { assembleMPO } from '../core/mpo';
-import { buildScene, downscale, type SceneSettings } from '../core/scene';
+import { buildScene, downscale, type SceneResult, type SceneSettings } from '../core/scene';
 import { StereoPipeline } from '../core/pipeline';
 import type { StereoSettings } from '../core/settings';
 import type { RGBAImage } from '../core/types';
 import type { RawDepth, WorkerRequest, WorkerResponse } from './protocol';
 import { encodeVideo, encodeWiggleVideo } from './video';
+import { cutout, depthPng, frameName, normaliseRaw, png, resizeDepth, type Part } from '../core/parts';
+import type { PartsKind } from './protocol';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const preview = new StereoPipeline();
@@ -55,7 +57,7 @@ function applyScene(): { applied: boolean; preview: RGBAImage | null } {
   exportPipeline?.setDepth(depth);
   return { applied: false, preview: null };
 }
-let exportSource: { image: RGBAImage; depth: DepthMap } | null = null;
+let exportSource: SceneResult | null = null;
 
 function post(msg: WorkerResponse, transfer: Transferable[] = []) {
   ctx.postMessage(msg, transfer);
@@ -133,6 +135,10 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           baseReused: r.baseReused, ms: performance.now() - t0, timings: r.timings,
         },
       }, transfer);
+    } else if (msg.type === 'parts') {
+      const files = await buildParts(msg.settings, msg.kind, (stage) => post({ type: 'progress', id: msg.id, stage }));
+      const out = files.map((f) => ({ name: f.name, bytes: f.bytes.slice().buffer as ArrayBuffer }));
+      post({ type: 'parts-ready', id: msg.id, files: out }, out.map((f) => f.bytes));
     } else if (msg.type === 'export') {
       let pipeline: StereoPipeline;
       const progress = (stage: string) => post({ type: 'progress', id: msg.id, stage });
@@ -151,19 +157,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         }
         pipeline.setCustomTexture(texture);
       } else {
-        if (!source) throw new Error('No image loaded');
-        if (!exportPipeline) {
-          exportPipeline = new StereoPipeline();
-          if (exportSource) {
-            exportPipeline.setSource(exportSource.image);
-            exportPipeline.setDepth(exportSource.depth, true);
-          } else {
-            exportPipeline.setSource(source);
-            exportPipeline.setDepth(depth);
-          }
-          exportPipeline.setCustomTexture(texture);
-        }
-        pipeline = exportPipeline;
+        pipeline = fullPipeline();
       }
       const out = await exportFormat(pipeline, msg.settings, progress);
       post({ type: 'exported', id: msg.id, ...out });
@@ -172,6 +166,76 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     post({ type: 'error', id: msg.id, message: err instanceof Error ? err.message : String(err) });
   }
 };
+
+/** Full-resolution export pipeline for the current photo (or scene). */
+function fullPipeline(): StereoPipeline {
+  if (!source) throw new Error('No image loaded');
+  if (!exportPipeline) {
+    exportPipeline = new StereoPipeline();
+    if (exportSource) {
+      exportPipeline.setSource(exportSource.image);
+      exportPipeline.setDepth(exportSource.depth, true);
+    } else {
+      exportPipeline.setSource(source);
+      exportPipeline.setDepth(depth);
+    }
+    exportPipeline.setCustomTexture(texture);
+  }
+  return exportPipeline;
+}
+
+/** The pictures behind each style, as separate files. */
+async function buildParts(s: StereoSettings, kind: PartsKind, progress: (stage: string) => void): Promise<Part[]> {
+  const p = fullPipeline();
+  const files: Part[] = [];
+  const all = kind === 'all';
+  const stereo = s.format !== 'motion' && s.format !== 'stereogram' && s.format !== 'card';
+  if (kind === 'views' || (all && stereo)) {
+    progress('Rendering the eye views…');
+    const r = p.render(s, 1, { compose: false });
+    files.push(png('left.png', r.left), png('right.png', r.right));
+    if (all && s.format !== 'wiggle' && s.format !== 'mpo') files.push(png(`output_${s.format}.png`, p.render(s, 1).output));
+  }
+  if (kind === 'depth' || all) {
+    progress('Preparing the depth maps…');
+    const framed = p.framedDepth(s, 1);
+    const d = p.getDepth();
+    if (!framed || !d) throw new Error('The depth map is not ready yet.');
+    files.push(depthPng('depth.png', framed));
+    const src = p.getSource()!;
+    const full = d.normalized ? d.map : normaliseRaw(d.map);
+    files.push(depthPng('depth_full_photo.png', resizeDepth(full, src.width, src.height)));
+  }
+  if ((kind === 'frames' || all) && s.format === 'wiggle') {
+    progress('Rendering the wiggle frames…');
+    const frames = p.renderWiggleFrames(s, s.wiggleFrames, 1);
+    frames.forEach((f, i) => files.push(png(frameName('wiggle_frame', i, frames.length), f)));
+  }
+  if ((kind === 'frames' || all) && s.format === 'motion') {
+    const m = p.motionRenderer(s, 1);
+    if (!m.hasDepth) throw new Error('The depth map is not ready yet.');
+    const { count } = motionTiming(s.motion);
+    for (let i = 0; i < count; i++) {
+      if (i % 5 === 0) progress(`Rendering motion frames ${i + 1}/${count}…`);
+      files.push(png(frameName('motion_frame', i, count), m.frame(i / count)));
+    }
+  }
+  if (all && s.format === 'stereogram') {
+    progress('Rendering the stereogram parts…');
+    const st = p.renderStereogram(s, 1);
+    files.push(png('stereogram.png', st.image));
+    if (st.sketch) files.push(png('stereogram_sketch.png', st.sketch));
+    if (st.shape) files.push(depthPng('stereogram_hidden_shape.png', st.shape));
+  }
+  if (all && exportSource && source) {
+    progress('Adding the 3D Scene parts…');
+    files.push(png('scene_photo.png', exportSource.image));
+    files.push(png('scene_subject_cutout.png', cutout(source, exportSource.alpha)));
+    files.push(png('scene_background.png', exportSource.background));
+    files.push(depthPng('scene_depth.png', exportSource.depth));
+  }
+  return files;
+}
 
 async function encodeCanvas(img: RGBAImage, type: 'image/jpeg' | 'image/webp', quality: number): Promise<Blob> {
   const canvas = new OffscreenCanvas(img.width, img.height);

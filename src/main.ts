@@ -3,7 +3,7 @@
  * the depth + processing workers and the preview renderer, and runs exports.
  */
 import './styles.css';
-import { zipSync } from 'fflate';
+import { unzipSync, zipSync } from 'fflate';
 import type { DepthMap } from './core/depth';
 import { composeLayout } from './core/formats';
 import { defaultCrop, resolveOutputSize, type FitMode, type StereoFormat } from './core/layout';
@@ -747,6 +747,10 @@ function syncUI() {
   $<HTMLButtonElement>('btn-export').disabled = !has || exporting;
   $<HTMLButtonElement>('btn-export-top').disabled = !has || exporting;
   $<HTMLButtonElement>('btn-batch').disabled = exporting;
+  for (const id of ['dl-depth', 'dl-views', 'dl-frames', 'dl-parts']) $<HTMLButtonElement>(id).disabled = !has || exporting;
+  $('dl-frames').classList.toggle('hidden', s.format !== 'wiggle' && s.format !== 'motion');
+  $('dl-frames').textContent = s.format === 'motion' ? `Motion frames as pictures (${motionTiming(s.motion).count})` : `Wiggle frames as pictures (${s.wiggleFrames})`;
+  $('dl-hint').textContent = partsHint(s);
   $('empty').classList.toggle('hidden', has);
 
   document.querySelectorAll<HTMLElement>('#view-mode button').forEach((b) => {
@@ -879,6 +883,57 @@ async function doExport() {
     setBusy(false);
     syncUI();
   }
+}
+
+/** "More downloads": the pictures behind the current style as separate files. */
+async function downloadParts(kind: 'depth' | 'views' | 'frames' | 'all') {
+  if (!current || exporting) return;
+  exporting = true;
+  syncUI();
+  try {
+    const needsDepth = kind === 'depth' || kind === 'all' || settings.format === 'motion' || settings.format === 'stereogram' || settings.scene.enabled;
+    if (needsDepth && depthState.kind !== 'ready') {
+      setBusy(true, 'Waiting for depth analysis…');
+      const map = await ensureDepth();
+      if (!map) throw new Error('The depth map is not available.');
+    }
+    setBusy(true, 'Preparing downloads…');
+    const files = await worker.exportParts(settings, kind, (stage) => setBusy(true, stage));
+    if (kind === 'all' && settings.format === 'card' && cardResult) {
+      const zipped = unzipSync(new Uint8Array(await (await cardZip(cardResult)).arrayBuffer()));
+      for (const [name, bytes] of Object.entries(zipped)) files.push({ name: `card_${name}`, bytes });
+    }
+    const base = baseName(current.name);
+    if (files.length === 1) {
+      download(new Blob([files[0].bytes as BlobPart], { type: 'image/png' }), `${base}_${files[0].name}`);
+      toast(`Downloaded ${base}_${files[0].name}`);
+    } else {
+      const entries: Record<string, [Uint8Array, { level: 0 | 6 }]> = {};
+      for (const f of files) entries[f.name] = [f.bytes, { level: /\.(png|webp|jpe?g)$/.test(f.name) ? 0 : 6 }];
+      const label = { depth: 'depth_maps', views: 'views', frames: 'frames', all: 'parts' }[kind];
+      const name = `${base}_3d_${label}.zip`;
+      download(new Blob([zipSync(entries) as BlobPart], { type: 'application/zip' }), name);
+      toast(`Downloaded ${name} (${files.length} files)`);
+    }
+  } catch (e) {
+    toast(`Download failed: ${(e as Error).message}`, true);
+  } finally {
+    exporting = false;
+    setBusy(false);
+    syncUI();
+  }
+}
+
+function partsHint(s: StereoSettings): string {
+  const common = 'Depth maps are 16-bit grayscale PNGs (bright = near): one matching the output framing, one for the whole photo.';
+  const extra: Record<string, string> = {
+    wiggle: `Frames: the ${s.wiggleFrames} pictures the wiggle flips through — left view, ${s.wiggleFrames > 2 ? 'in-between views, ' : ''}right view.`,
+    motion: `Frames: all ${motionTiming(s.motion).count} pictures of the motion loop.`,
+    stereogram: 'All parts adds the stereogram, its sketch and the hidden 3D shape.',
+    card: 'All parts adds the card layers (frame, character, background).',
+  };
+  const scene = s.scene.enabled ? ' With 3D Scene on, All parts also includes the cut-out subject (transparent PNG), the new background and the scene depth.' : '';
+  return `${common} ${extra[s.format] ?? 'All parts: left and right views, the finished output and the depth maps.'}${scene}`;
 }
 
 /** Batch mode: apply the current settings to many photos and download a ZIP. */
@@ -1191,6 +1246,10 @@ function bindAll() {
   onInput('quality', (el) => { settings.exportQuality = num(el, 0.95); });
 
   $('btn-export').addEventListener('click', () => void doExport());
+  $('dl-depth').addEventListener('click', () => void downloadParts('depth'));
+  $('dl-views').addEventListener('click', () => void downloadParts('views'));
+  $('dl-frames').addEventListener('click', () => void downloadParts('frames'));
+  $('dl-parts').addEventListener('click', () => void downloadParts('all'));
   $('btn-export-top').addEventListener('click', () => void doExport());
   $('btn-share').addEventListener('click', async () => {
     const url = shareUrl(settings, location.href);

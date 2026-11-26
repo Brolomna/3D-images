@@ -3,7 +3,7 @@ import type { DepthMap } from '../core/depth';
 import type { SceneSettings } from '../core/scene';
 import type { StereoSettings } from '../core/settings';
 import type { RGBAImage } from '../core/types';
-import type { RawDepth, RenderInfo, WorkerRequest, WorkerResponse } from './protocol';
+import type { PartsKind, RawDepth, RenderInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 export interface RenderOutput {
   left: RGBAImage;
@@ -136,6 +136,12 @@ export class StereoWorkerClient {
         this.rendering = false;
       }
     }
+  }
+
+  /** Separate pictures behind the current style (depth maps, views, frames, …). */
+  async exportParts(settings: StereoSettings, kind: PartsKind, onProgress: (s: string) => void): Promise<{ name: string; bytes: Uint8Array }[]> {
+    const r = await this.call<Extract<WorkerResponse, { type: 'parts-ready' }>>({ type: 'parts', id: this.nextId++, settings: JSON.parse(JSON.stringify(settings)), kind }, [], onProgress);
+    return r.files.map((f) => ({ name: f.name, bytes: new Uint8Array(f.bytes) }));
   }
 
   exportImage(settings: StereoSettings, onProgress: (s: string) => void): Promise<ExportResult> {

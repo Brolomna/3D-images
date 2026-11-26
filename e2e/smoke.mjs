@@ -360,6 +360,32 @@ await chooseStyle('sbs');
   await chooseStyle('sbs');
 }
 
+// ── 3d. More downloads: depth maps, eye views, wiggle frames, all parts ──
+{
+  const grab = async (sel) => {
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 180000 }), page.click(sel)]);
+    const path = join(out, dl.suggestedFilename());
+    await dl.saveAs(path);
+    await page.waitForFunction(() => window.__stereo.idle, null, { timeout: 60000 });
+    return { name: dl.suggestedFilename(), bytes: readFileSync(path) };
+  };
+  const depthZip = unzipSync((await grab('#dl-depth')).bytes);
+  const dp = decode(depthZip['depth.png']);
+  check(dp.depth === 16 && dp.channels === 1 && !!depthZip['depth_full_photo.png'], `depth map download: 16-bit grayscale (${Object.keys(depthZip).join(', ')})`);
+  const views = unzipSync((await grab('#dl-views')).bytes);
+  check(!!views['left.png'] && !!views['right.png'], 'left + right views download');
+  await chooseStyle('wiggle');
+  const n = await page.evaluate(() => window.__stereo.settings.wiggleFrames);
+  const frames = unzipSync((await grab('#dl-frames')).bytes);
+  const fnames = Object.keys(frames).filter((k) => k.startsWith('wiggle_frame_'));
+  check(fnames.length === n, `wiggle frames download: ${fnames.length} pictures (${fnames.join(', ')})`);
+  const parts = unzipSync((await grab('#dl-parts')).bytes);
+  const pk = Object.keys(parts);
+  check(['left.png', 'right.png', 'depth.png', 'depth_full_photo.png'].every((k) => pk.includes(k)) && pk.filter((k) => k.startsWith('wiggle_frame_')).length === n,
+    `all parts download (${pk.length} files)`);
+  await chooseStyle('sbs');
+}
+
 // ── 4. Batch → ZIP ──
 {
   const [dl] = await Promise.all([

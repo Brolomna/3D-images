@@ -654,3 +654,42 @@ describe('Layered 3D card', () => {
     expect(() => splitCard(img, (w) => new Float32Array((w[2] - w[0]) * (w[3] - w[1])), settings, null)).toThrow(/No character/);
   });
 });
+
+import { cutout, encodeDepthPNG, frameName, normaliseRaw, resizeDepth } from '../src/core/parts';
+import { decode as decodePng } from 'fast-png';
+
+describe('More downloads', () => {
+  it('depth maps are 16-bit grayscale PNGs, bright = near', () => {
+    const m: DepthMap = { width: 4, height: 2, data: Float32Array.from([0, 0.25, 0.5, 1, 1, 0.5, 0.25, 0]) };
+    const p = decodePng(encodeDepthPNG(m));
+    expect([p.width, p.height, p.channels, p.depth]).toEqual([4, 2, 1, 16]);
+    expect(Array.from(p.data as Uint16Array)).toEqual([0, 16384, 32768, 65535, 65535, 32768, 16384, 0]);
+  });
+
+  it('normalises and resizes depth, and cuts out with a soft alpha', () => {
+    const raw: DepthMap = { width: 2, height: 1, data: Float32Array.from([5, 15]) };
+    expect(Array.from(normaliseRaw(raw).data)).toEqual([0, 1]);
+    const big = resizeDepth({ width: 2, height: 2, data: Float32Array.from([0, 1, 0, 1]) }, 4, 4);
+    expect([big.width, big.height]).toEqual([4, 4]);
+    expect(big.data[0]).toBe(0);
+    expect(big.data[3]).toBe(1);
+    const c = cutout(photo(4, 4, 1), { width: 2, height: 2, data: Float32Array.from([1, 0, 1, 0]) });
+    expect(c.data[3]).toBe(255);
+    expect(c.data[3 * 4 + 3]).toBe(0);
+    expect(frameName('wiggle_frame', 0, 6)).toBe('wiggle_frame_01.png');
+    expect(frameName('motion_frame', 4, 90)).toBe('motion_frame_05.png');
+  });
+
+  it('the pipeline gives the depth map aligned with the output framing', () => {
+    const p = new StereoPipeline();
+    p.setSource(photo(400, 700, 5));
+    p.setDepth({ width: 40, height: 70, data: Float32Array.from({ length: 2800 }, (_, i) => (i % 40) / 40) });
+    const s = settings((x) => { x.output.resolution = '720p'; x.depth.enabled = false; });
+    const d = p.framedDepth(s)!;
+    const r = p.render(s, 1, { compose: false });
+    expect([d.width, d.height]).toEqual([r.left.width, r.left.height]);
+    // Depth runs left (far) to right (near) like the source map.
+    expect(d.data[100 * d.width + d.width - 5]).toBeGreaterThan(d.data[100 * d.width + 5]);
+    expect(p.getDepth()!.normalized).toBe(false);
+  }, 30000);
+});

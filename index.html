@@ -493,6 +493,16 @@
         <div id="export-readout" class="readout"></div>
         <button id="btn-export" class="btn primary wide" disabled>Export</button>
         <button id="btn-share" class="btn small ghost wide">Copy settings link</button>
+        <div class="stack downloads">
+          <span class="label">More downloads</span>
+          <div class="row">
+            <button id="dl-depth" class="btn small" disabled title="16-bit grayscale PNG, bright = near">Depth map</button>
+            <button id="dl-views" class="btn small" disabled title="The left-eye and right-eye pictures">Left + right</button>
+          </div>
+          <button id="dl-frames" class="btn small wide hidden" disabled>Frames as pictures</button>
+          <button id="dl-parts" class="btn small wide" disabled>All parts (ZIP)</button>
+          <p id="dl-hint" class="hint"></p>
+        </div>
         <p class="hint">Exports always render at full output resolution. PNG is lossless; the Output preview shows exactly what is exported.</p>
       </section>
 
